@@ -1,0 +1,40 @@
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+
+    components:
+      - rmcs_core::hardware::Task2Motor -> task2_motor
+
+      - rmcs_core::controller::Task2MotorController -> task2_motor_controller
+      - rmcs_core::controller::pid::PidController -> task2_motor_velocity_pid_controller
+      - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
+
+
+task2_motor:
+  ros__parameters:
+    board_serial: ""
+
+task2_motor_controller:
+  ros__parameters:
+    target_velocity: 10.0
+      
+
+task2_motor_velocity_pid_controller:
+  ros__parameters:
+    measurement: /task2_motor/filtered_velocity
+    setpoint: /task2_motor/control_velocity
+    control: /task2_motor/control_torque
+    kp: 0.001
+    ki: 0.0
+    kd: 0.05
+
+    output_min: -0.05
+    output_max: 0.05
+
+value_broadcaster:
+  ros__parameters:
+    forward_list:
+      - /task2_motor/filtered_velocity
+      - /task2_motor/control_velocity
+      - /task2_motor/control_torque
+      - /task2_motor/velocity
