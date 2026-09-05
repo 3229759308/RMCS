@@ -1,0 +1,38 @@
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+
+    components:
+      - rmcs_core::hardware::Task3Motor -> task3_motor
+
+      - rmcs_core::controller::Task3MotorController -> task3_motor_controller
+      - rmcs_core::controller::pid::PidController -> task3_motor_velocity_pid_controller
+      - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
+
+
+task3_motor:
+  ros__parameters:
+    board_serial: ""
+
+task3_motor_controller:
+  ros__parameters:
+    max_velocity: 10.0
+      
+
+task3_motor_velocity_pid_controller:
+  ros__parameters:
+    measurement: /task3_motor/velocity
+    setpoint: /task3_motor/control_velocity
+    control: /task3_motor/control_torque
+    kp: 0.032
+    ki: 0.0002
+    kd: 0.02
+    integral_min: -200.0
+    integral_max: 200.0
+
+value_broadcaster:
+  ros__parameters:
+    forward_list:
+      - /task3_motor/control_velocity
+      - /task3_motor/control_torque
+      - /task3_motor/velocity
