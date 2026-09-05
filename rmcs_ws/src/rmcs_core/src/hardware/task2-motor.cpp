@@ -44,12 +44,16 @@ public:
         , task2_command_(
               create_partner_component<Task2Command>(get_component_name() + "_command", *this))
         ,task2_motor_(*this, *task2_command_, "/task2_motor") 
+        ,dr16_{}
         {
         task2_motor_.configure(
-            device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}.set_reduction_ratio(1.).set_reversed());
+            device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}.set_reduction_ratio(1.));
         
         board_ = std::make_unique<librmcs::board::CBoard>(
             *this, get_parameter("board_serial").as_string());
+
+        remote_control_ = std::make_unique<device::RemoteControl>(*this);
+        remote_control_->register_dr16(&dr16_);
 
         }
     Task2Motor(const Task2Motor&) = delete;
@@ -62,16 +66,15 @@ public:
     void update() override {
         update_motors();
         
-        // dr16_.update_status();
-        // remote_control_->update();  
-        
+        dr16_.update_status();
+        remote_control_->update();
     }
     
     void command_update() {
         auto builder = board_->start_transmit();
 
         builder.can_transmit(
-            Spec::kCans.kCan1,            //
+            Spec::kCans.kCan1,
             {
                 .can_id = 0x200,
                 .can_data =
@@ -88,16 +91,6 @@ public:
 private:
     void update_motors() {
     task2_motor_.update_status();
-    static int count = 0;
-    if (++count % 1000 == 0) {
-        RCLCPP_INFO(
-        logger_,
-        "angle %.3f velocity %.3f torque %.3f",
-        task2_motor_.angle(),
-        task2_motor_.velocity(),
-        task2_motor_.torque()
-);
-    }
 }
 
     void can_receive_callback(const Spec::Can& can, const View::Can& data) override {
@@ -112,6 +105,11 @@ private:
         }
     }
 
+    void uart_receive_callback(const Spec::Uart& uart, const View::Uart& data) override {
+        if (uart == Spec::kUarts.kDbus) {
+            dr16_.store_status(data.uart_data.data(), data.uart_data.size());
+        }
+    }
 
 
 
@@ -134,6 +132,9 @@ private:
     std::shared_ptr<Task2Command> task2_command_;
 
     device::DjiMotor task2_motor_;
+
+    device::Dr16 dr16_;
+    std::unique_ptr<device::RemoteControl> remote_control_;
 };
 
 } // namespace rmcs_core::hardware

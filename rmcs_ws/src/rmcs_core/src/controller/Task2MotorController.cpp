@@ -16,6 +16,7 @@
 #include <rmcs_msgs/switch.hpp>
 #include <rmcs_utility/fps_counter.hpp>
 #include "filter/low_pass_filter.hpp"
+#include <rmcs_msgs/switch.hpp>
 
 namespace rmcs_core::controller {
 
@@ -29,16 +30,28 @@ public:
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true))
         , logger_(get_logger()) {
         
-        target_velocity_ = get_parameter("target_velocity").as_double();
+        max_velocity_ = get_parameter("max_velocity").as_double();
         register_input("/task2_motor/velocity", task2_motor_velocity_);
         register_output( "/task2_motor/control_velocity", task2_motor_control_velocity_, nan_);
         register_output("/task2_motor/filtered_velocity", filtered_velocity_,nan_);
-        }
+        register_input("/remote/joystick/right", joystick_right_);
+        register_input("/remote/switch/right", switch_right_);
+        register_input("/remote/switch/left", switch_left_);
+    }
 
     void update() override {
-    *filtered_velocity_ =
+        *filtered_velocity_ =
         velocity_filter_.update(*task2_motor_velocity_);
-    *task2_motor_control_velocity_ = target_velocity_;
+        using rmcs_msgs::Switch;
+
+        if (*switch_left_ == Switch::UNKNOWN ||*switch_right_ == Switch::UNKNOWN ||
+            (*switch_left_ == Switch::DOWN &&*switch_right_ == Switch::DOWN)) {
+            *task2_motor_control_velocity_ = nan_;
+            return;
+        }
+        const double axis = joystick_right_->x();
+        *task2_motor_control_velocity_ = axis * max_velocity_;
+
     }
 
 private:
@@ -46,8 +59,11 @@ private:
 
     rclcpp::Logger logger_;
 
+    InputInterface<Eigen::Vector2d> joystick_right_;
+    InputInterface<rmcs_msgs::Switch> switch_right_;
+    InputInterface<rmcs_msgs::Switch> switch_left_;
 
-    double target_velocity_;
+    double max_velocity_;
 
     InputInterface<double> task2_motor_velocity_;
     OutputInterface<double> task2_motor_control_velocity_;
