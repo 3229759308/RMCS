@@ -7,6 +7,7 @@ rmcs_executor:
 
       - rmcs_core::controller::Task3MotorController -> task3_motor_controller
       - rmcs_core::controller::pid::PidController -> task3_motor_velocity_pid_controller
+      - rmcs_core::controller::pid::ErrorPidController -> task3_motor_angle_error_pid_controller
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
 
 
@@ -14,21 +15,28 @@ task3_motor:
   ros__parameters:
     board_serial: ""
 
-task3_motor_controller:
-  ros__parameters:
-    max_velocity: 10.0
-      
-
 task3_motor_velocity_pid_controller:
   ros__parameters:
     measurement: /task3_motor/velocity
     setpoint: /task3_motor/control_velocity
     control: /task3_motor/control_torque
-    kp: 0.032
-    ki: 0.0002
-    kd: 0.02
+    kp: 0.016
+    ki: 0.0004
+    kd: 0.0
+    integral_min: -150.0
+    integral_max: 150.0
+
+task3_motor_angle_error_pid_controller:
+  ros__parameters:
+    measurement: /task3_motor/control_angle
+    control: /task3_motor/control_velocity
+    kp: 8.0
+    ki: 0.00
+    kd: 0.0
     integral_min: -200.0
     integral_max: 200.0
+    output_min: -10.0
+    output_max: 10.0
 
 value_broadcaster:
   ros__parameters:
@@ -36,3 +44,6 @@ value_broadcaster:
       - /task3_motor/control_velocity
       - /task3_motor/control_torque
       - /task3_motor/velocity
+      - /task3_motor/angle
+      - /task3_motor/control_angle
+      - /task3_motor/target_angle

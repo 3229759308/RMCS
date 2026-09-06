@@ -74,10 +74,6 @@ public:
         task3_motor_.angle(),
         task3_motor_.velocity(),
         task3_motor_.torque());
-        RCLCPP_INFO_THROTTLE(
-        get_logger(), *get_clock(), 1000,
-        "motor command torque: %.6f",
-        task3_motor_.control_torque());
     }
     
     void command_update() {

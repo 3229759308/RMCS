@@ -1,3 +1,142 @@
+# 第二周作业完成情况
+
+## 任务一：阅读代码与组件串联 ✅
+
+以 OmniInfantry 的 17mm 发射机构为例，阅读相关代码，
+梳理摩擦轮控制、热量管理、拨弹控制、速度 PID 与硬件命令
+组件之间的输入输出和依赖关系，绘制组件串联图。
+
+![发射机构组件串联图](docs/week2/task1-components.png)
+
+## 任务二：使用 RMCS 驱动电机 ✅
+
+### 实现内容
+
+- 编写 M3508 电机硬件组件，接入 DR16 遥控器。
+- 将遥控器摇杆映射为目标速度。
+- 使用 PID 实现速度闭环控制。
+- 对电机速度反馈进行滤波。
+- 使用 Foxglove 观察目标速度、实际速度与滤波结果。
+
+### 测试结果
+
+实机测试覆盖正反转、不同目标速度、连续变速及快速切换。
+目标速度与实际速度曲线整体高度贴合，在约 ±400 rad/s
+保持段也能稳定跟踪，图示测试中未见明显持续振荡，
+体现出较好的 PID 速度闭环控制效果。
+
+![目标速度与实际速度对比](docs/week2/task2-speed-tracking.png)
+
+滤波后反馈保留了整体速度变化趋势。在约 400 rad/s
+的保持段，滤波后信号较原始反馈明显更平滑。
+
+![滤波前后整体对比](docs/week2/task2-filter-overview.png)
+
+![滤波效果局部放大](docs/week2/task2-filter-detail.png)
+
+### 启动方式
+
+在容器的 rmcs_ws 目录下执行：
+
+    source install/setup.bash
+    ros2 launch rmcs_bringup rmcs.launch.py robot:=task2-motor-test
+
+## 任务三：使用双环 PID 控制电机角度 ✅
+
+### 实现内容
+
+- 使用 GM6020 电机，采用角度外环 P、速度内环 PI 控制。
+- 通过 ROS2 Topic 接收目标角度，收到一次指令后持续保持目标。
+- 使用单圈角度反馈，根据实际运动量更新优弧剩余误差。
+- 新目标到来时重新规划优弧行程。
+- 相同位置不额外转圈；相差整圈的角度视为等价目标。
+- 启动后尚未收到有效目标时，不进行位置控制。
+
+控制流程：
+
+目标角度 → 优弧误差计算 → 角度外环 → 目标速度
+→ 速度内环 → 输出力矩 → 电机
+
+### Topic 接口
+
+| Topic | 用途 | 类型 / 单位 |
+|---|---|---|
+| `/task3_motor/command_angle` | 接收目标角度 | `std_msgs/msg/Float64`，rad |
+| `/task3_motor/target_angle` | 目标角度观测 | rad |
+| `/task3_motor/angle` | 实际单圈角度 | rad |
+| `/task3_motor/control_angle` | 优弧剩余误差 | rad |
+| `/task3_motor/control_velocity` | 目标角速度 | rad/s |
+| `/task3_motor/velocity` | 实际角速度 | rad/s |
+| `/task3_motor/control_torque` | 输出力矩指令 | N·m |
+
+观测数据通过 ValueBroadcaster 发布，在 Foxglove 中使用 `.data` 字段绘图。
+
+### 最终控制参数
+
+控制更新频率：1000 Hz。
+
+| 参数 | 速度内环 | 角度外环 |
+|---|---:|---:|
+| kp | 0.016 | 8.0 |
+| ki | 0.0004 | 0.0 |
+| kd | 0.0 | 0.0 |
+| 积分累加误差限幅 | ±150 | I 项未启用 |
+| 输出限幅 | 未配置软件总输出限幅 | ±10 rad/s |
+
+速度内环积分项最大贡献为：
+
+    0.0004 × 150 = 0.06 N·m
+
+角度外环的 ±10 rad/s 限制作用于目标速度，
+实际速度在瞬态过程中仍可能超出该范围。
+
+### 测试结果
+
+通过 Topic 下发 90°、180°、90° 目标角度，完成双向定位测试：
+
+- 90° → 180°：沿负方向运动约 270°。
+- 180° → 90°：沿正方向运动约 270°。
+- 两次运动均按优弧到达目标附近并保持。
+- 单圈反馈跨越 0 / 2π 时会在角度图中跳变，
+  剩余误差通过运动增量持续更新。
+
+![ROS2 Topic 角度指令发布](docs/week2/task3-topic-command.png)
+
+![目标角度与实际角度响应](docs/week2/task3-angle-tracking.png)
+
+到位附近存在短暂超调，随后误差逐步修正。
+图示末段采样点误差约为 0.00537 rad（0.31°），
+未出现持续来回振荡。该数值为本次测试的采样结果，
+不代表所有工况下的最大误差。
+
+![角度误差局部放大](docs/week2/task3-angle-error.png)
+
+### 启动与测试命令
+
+启动控制程序：
+
+    source install/setup.bash
+    ros2 launch rmcs_bringup rmcs.launch.py robot:=task3_motor_test
+
+在另一个已 source 的容器终端发布 90°：
+
+    ros2 topic pub --once /task3_motor/command_angle std_msgs/msg/Float64 "{data: 1.5707963267948966}"
+
+等待到位后发布 180°：
+
+    ros2 topic pub --once /task3_motor/command_angle std_msgs/msg/Float64 "{data: 3.141592653589793}"
+
+## 测试环境
+
+- Windows + WSL + Docker + VS Code Dev Container
+- RMCS / ROS2
+- C 板、DR16 遥控器、M3508 与 GM6020 电机
+- Foxglove 可视化，比较曲线统一使用日志时间
+
+
+
+
+
 # RMCS
 RoboMaster Control System based on ROS2.
 
