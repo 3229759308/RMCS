@@ -11,6 +11,8 @@
   <class type="rmcs_core::controller::Task2MotorController" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::hardware::Task3Motor" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::Task3MotorController" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::hardware::DartPitchHardware" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_core::controller::DartPitchController" base_class_type="rmcs_executor::Component" />
 
   <class type="rmcs_core::controller::chassis::ChassisController" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_core::controller::chassis::ChassisPowerController" base_class_type="rmcs_executor::Component" />
