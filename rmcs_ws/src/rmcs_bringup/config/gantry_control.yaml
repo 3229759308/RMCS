@@ -18,9 +18,13 @@ gantry_control_hardware:
 
 gantry_controller:
   ros__parameters:
-    horizontal_max_velocity: 5.0 # Output shaft rad/s at full stick
-    up_max_velocity: 5.0
+    horizontal_max_velocity: 10.0 # Output shaft rad/s at full stick
+    up_max_velocity: 10.0
     joystick_deadzone: 0.05
+    left_zero_angle: 1.4 # Bottom reference, output shaft rad
+    right_zero_angle: -0.5
+    sync_kp: 0.1 # Position error (rad) -> differential velocity (rad/s); both switches MIDDLE
+    max_sync_velocity: 2.0 # Maximum correction per motor, rad/s
 
 left_velocity_pid_controller:
   ros__parameters:

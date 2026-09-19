@@ -39,6 +39,15 @@ public:
             || joystick_deadzone_ >= 1.0)
             throw std::runtime_error("Invalid gantry velocity limits or joystick deadzone");
 
+        left_zero_angle_ = get_parameter("left_zero_angle").as_double();
+        right_zero_angle_ = get_parameter("right_zero_angle").as_double();
+        sync_kp_ = get_parameter("sync_kp").as_double();
+        max_sync_velocity_ = get_parameter("max_sync_velocity").as_double();
+        if (!std::isfinite(left_zero_angle_) || !std::isfinite(right_zero_angle_)
+            || !std::isfinite(sync_kp_) || sync_kp_ < 0.0
+            || !std::isfinite(max_sync_velocity_) || max_sync_velocity_ < 0.0)
+            throw std::runtime_error("Invalid gantry synchronization parameters");
+
         register_input("/dart/left_motor/velocity", left_motor_velocity_);
         register_input("/dart/left_motor/angle", left_motor_angle_);
         register_input("/dart/left_motor/torque", left_motor_torque_);
@@ -54,6 +63,7 @@ public:
         register_input("/dart/up_motor/torque", up_motor_torque_);
         register_output( "/dart/up_motor/control_velocity", up_motor_control_velocity_, nan_);
 
+        register_input("/remote/joystick/left", joystick_left_);
         register_input("/remote/joystick/right", joystick_right_);
         register_input("/remote/switch/right", switch_right_);
         register_input("/remote/switch/left", switch_left_);
@@ -63,7 +73,7 @@ public:
     void update() override {
         using rmcs_msgs::Switch;
 
-        if (!joystick_right_->allFinite() || *switch_left_ == Switch::UNKNOWN ||*switch_right_ == Switch::UNKNOWN ||
+        if (!joystick_left_->allFinite() || !joystick_right_->allFinite() || *switch_left_ == Switch::UNKNOWN ||*switch_right_ == Switch::UNKNOWN ||
             (*switch_left_ == Switch::DOWN &&*switch_right_ == Switch::DOWN)) {
             *left_motor_control_velocity_ = nan_;
             *right_motor_control_velocity_ = nan_;
@@ -79,11 +89,36 @@ public:
             return std::copysign(
                 (std::abs(value) - joystick_deadzone_) / (1.0 - joystick_deadzone_), value);
         };
-        const double horizontal_velocity =
-            apply_deadzone(joystick_right_->x()) * horizontal_max_velocity_;
-        *left_motor_control_velocity_ = horizontal_velocity;
-        *right_motor_control_velocity_ = horizontal_velocity;
-        *up_motor_control_velocity_ = apply_deadzone(joystick_right_->y()) * up_max_velocity_;
+        // Left stick trims each motor independently; right stick commands common motion.
+        // Reverse both right-stick axes to match the mechanism's physical direction.
+        const double common_command = -apply_deadzone(joystick_right_->x());
+        *left_motor_control_velocity_ = std::clamp(
+            common_command + apply_deadzone(joystick_left_->x()), -1.0, 1.0)
+            * horizontal_max_velocity_;
+        *right_motor_control_velocity_ = std::clamp(
+            common_command + apply_deadzone(joystick_left_->y()), -1.0, 1.0)
+            * horizontal_max_velocity_;
+        *up_motor_control_velocity_ = -apply_deadzone(joystick_right_->y()) * up_max_velocity_;
+
+        // Both motor angles must increase in the same direction of gantry travel.
+        // Use continuous output-shaft angles, not wrapped single-turn differences.
+        if (*switch_left_ == Switch::MIDDLE && *switch_right_ == Switch::MIDDLE) {
+            if (!std::isfinite(*left_motor_angle_) || !std::isfinite(*right_motor_angle_)) {
+                *left_motor_control_velocity_ = nan_;
+                *right_motor_control_velocity_ = nan_;
+                return;
+            }
+            const double sync_error = (*left_motor_angle_ - left_zero_angle_)
+                                    - (*right_motor_angle_ - right_zero_angle_);
+            const double correction = std::clamp(
+                sync_kp_ * sync_error, -max_sync_velocity_, max_sync_velocity_);
+            *left_motor_control_velocity_ = std::clamp(
+                *left_motor_control_velocity_ - correction,
+                -horizontal_max_velocity_, horizontal_max_velocity_);
+            *right_motor_control_velocity_ = std::clamp(
+                *right_motor_control_velocity_ + correction,
+                -horizontal_max_velocity_, horizontal_max_velocity_);
+        }
     }  
 
 private:
@@ -93,7 +128,12 @@ private:
     double horizontal_max_velocity_;
     double up_max_velocity_;
     double joystick_deadzone_;
+    double left_zero_angle_;
+    double right_zero_angle_;
+    double sync_kp_;
+    double max_sync_velocity_;
 
+    InputInterface<Eigen::Vector2d> joystick_left_;
     InputInterface<Eigen::Vector2d> joystick_right_;
     InputInterface<rmcs_msgs::Switch> switch_right_;
     InputInterface<rmcs_msgs::Switch> switch_left_;
