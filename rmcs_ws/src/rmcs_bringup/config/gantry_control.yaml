@@ -1,0 +1,81 @@
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+
+    components:
+      - rmcs_core::hardware::GantryControlHardware -> gantry_control_hardware
+
+      - rmcs_core::controller::GantryController -> gantry_controller
+      - rmcs_core::controller::pid::PidController -> left_velocity_pid_controller
+      - rmcs_core::controller::pid::PidController -> right_velocity_pid_controller
+      - rmcs_core::controller::pid::PidController -> up_velocity_pid_controller
+
+      - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
+
+gantry_control_hardware:
+  ros__parameters:
+    board_serial: ""
+
+gantry_controller:
+  ros__parameters:
+    horizontal_max_velocity: 5.0 # Output shaft rad/s at full stick
+    up_max_velocity: 5.0
+    joystick_deadzone: 0.05
+
+left_velocity_pid_controller:
+  ros__parameters:
+    measurement: /dart/left_motor/velocity
+    setpoint: /dart/left_motor/control_velocity
+    control: /dart/left_motor/control_torque
+    kp: 0.3036926
+    ki: 0.0
+    kd: 0.009373434
+    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
+    output_max: 0.18
+
+right_velocity_pid_controller:
+  ros__parameters:
+    measurement: /dart/right_motor/velocity
+    setpoint: /dart/right_motor/control_velocity
+    control: /dart/right_motor/control_torque
+    kp: 0.3036926
+    ki: 0.0
+    kd: 0.009373434
+    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
+    output_max: 0.18
+
+up_velocity_pid_controller:
+  ros__parameters:
+    measurement: /dart/up_motor/velocity
+    setpoint: /dart/up_motor/control_velocity
+    control: /dart/up_motor/control_torque
+    kp: 0.3036926
+    ki: 0.0
+    kd: 0.009373434
+    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
+    output_max: 0.18
+
+value_broadcaster:
+  ros__parameters:
+    forward_list:
+      - /gantry/imu/roll
+      - /gantry/imu/pitch
+      - /gantry/imu/yaw
+      - /dart/left_motor/velocity
+      - /dart/left_motor/angle
+      - /dart/left_motor/torque
+      - /dart/left_motor/control_velocity
+      - /dart/left_motor/control_torque
+      - /dart/right_motor/velocity
+      - /dart/right_motor/angle
+      - /dart/right_motor/torque
+      - /dart/right_motor/control_velocity
+      - /dart/right_motor/control_torque
+      - /dart/up_motor/velocity
+      - /dart/up_motor/angle
+      - /dart/up_motor/torque
+      - /dart/up_motor/control_velocity
+      - /dart/up_motor/control_torque
+
+
+
