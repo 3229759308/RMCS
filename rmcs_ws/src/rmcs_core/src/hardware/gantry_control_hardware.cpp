@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <cerrno>
@@ -24,8 +25,7 @@
 #include <rmcs_utility/ring_buffer.hpp>
 #include <std_msgs/msg/int32.hpp>
 
-#include "hardware/device/bmi088_ekf.hpp"
-#include "hardware/device/board_clock_lifter.hpp"
+#include "hardware/device/bmi088.hpp"
 #include "hardware/device/can_packet.hpp"
 #include "hardware/device/dji_motor.hpp"
 #include "hardware/device/dr16.hpp"
@@ -62,7 +62,7 @@ public:
         up_motor_.configure(
             device::DjiMotor::Config{device::DjiMotor::Type::kM2006, 1}.enable_multi_turn_angle());
         
-        // RPY uses R = Rz(yaw) * Ry(pitch) * Rx(roll), in radians.
+        // Gantry roll = sensor pitch, gantry pitch = sensor roll, yaw unchanged; radians.
         const auto unavailable = std::numeric_limits<double>::quiet_NaN();
         register_output("/gantry/imu/roll", imu_roll_, unavailable);
         register_output("/gantry/imu/pitch", imu_pitch_, unavailable);
@@ -110,15 +110,19 @@ public:
 
 private:
     void update_imu() {
-        const auto snapshot = bmi088_.snapshot();
-        if (!snapshot)
+        if (!imu_accelerometer_received_.load(std::memory_order_acquire)
+            || !imu_gyroscope_received_.load(std::memory_order_acquire))
             return;
 
-        const auto q = snapshot->orientation.normalized();
-        *imu_roll_ = std::atan2(
+        // Match the 2025 implementation: one Mahony step per 1000 Hz executor update.
+        bmi088_.update_status();
+        const auto q = Eigen::Quaterniond{
+            bmi088_.q0(), bmi088_.q1(), bmi088_.q2(), bmi088_.q3()}.normalized();
+        // Swap output angle labels only, preserving sensor coordinates during fusion.
+        *imu_pitch_ = std::atan2(
             2.0 * (q.w() * q.x() + q.y() * q.z()),
             1.0 - 2.0 * (q.x() * q.x() + q.y() * q.y()));
-        *imu_pitch_ = std::asin(std::clamp(
+        *imu_roll_ = std::asin(std::clamp(
             2.0 * (q.w() * q.y() - q.z() * q.x()), -1.0, 1.0));
         *imu_yaw_ = std::atan2(
             2.0 * (q.w() * q.z() + q.x() * q.y()),
@@ -126,15 +130,13 @@ private:
     }
 
     void accelerometer_receive_callback(const View::ImuAccelerometer& data) override {
-        const auto timestamp = board_clock_lifter_.advance_timebase(data.timestamp_quarter_us);
-        bmi088_.push_accelerometer_sample(data.x, data.y, data.z, timestamp);
+        bmi088_.store_accelerometer_status(data.x, data.y, data.z);
+        imu_accelerometer_received_.store(true, std::memory_order_release);
     }
 
     void gyroscope_receive_callback(const View::ImuGyroscope& data) override {
-        const auto timestamp = board_clock_lifter_.lift_timestamp(data.timestamp_quarter_us);
-        if (!timestamp)
-            return;
-        bmi088_.try_update_with_gyroscope_sample(data.x, data.y, data.z, *timestamp);
+        bmi088_.store_gyroscope_status(data.x, data.y, data.z);
+        imu_gyroscope_received_.store(true, std::memory_order_release);
     }
 
     void update_motors() {
@@ -188,9 +190,10 @@ private:
 
     device::Dr16 dr16_;
     std::unique_ptr<device::RemoteControl> remote_control_;
-    // Default mapping: body axes match the board sensor axes.
-    device::Bmi088Ekf bmi088_;
-    device::BoardClockLifter board_clock_lifter_;
+    // Legacy Mahony gains; sample frequency matches gantry_control.yaml update_rate.
+    device::Bmi088 bmi088_{1000.0, 0.2, 0.0};
+    std::atomic<bool> imu_accelerometer_received_{false};
+    std::atomic<bool> imu_gyroscope_received_{false};
     OutputInterface<double> imu_roll_;
     OutputInterface<double> imu_pitch_;
     OutputInterface<double> imu_yaw_;

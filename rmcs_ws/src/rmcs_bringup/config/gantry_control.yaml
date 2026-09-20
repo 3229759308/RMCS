@@ -6,9 +6,6 @@ rmcs_executor:
       - rmcs_core::hardware::GantryControlHardware -> gantry_control_hardware
 
       - rmcs_core::controller::GantryController -> gantry_controller
-      - rmcs_core::controller::pid::PidController -> left_velocity_pid_controller
-      - rmcs_core::controller::pid::PidController -> right_velocity_pid_controller
-      - rmcs_core::controller::pid::PidController -> up_velocity_pid_controller
 
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
 
@@ -21,47 +18,43 @@ gantry_controller:
     horizontal_max_velocity: 10.0 # Output shaft rad/s at full stick
     up_max_velocity: 10.0
     joystick_deadzone: 0.05
+    # Double-middle: capture current IMU pitch, then adjust/hold it with right stick X.
+    pitch_target_rate: 0.1 # rad/s at full stick
+    pitch_target_span: 0.1745329252 # +/-10 degrees from the captured angle; target soft limit
+    pitch_motor_direction: -1.0 # Motor velocity sign that increases IMU pitch; verify on hardware
+    pitch_kp: 1.0 # Pitch error in radians -> motor speed in rad/s
+    pitch_ki: 0.0
+    pitch_kd: 0.0
+    pitch_integral_min: -1.0
+    pitch_integral_max: 1.0
+    pitch_output_min: -2.0
+    pitch_output_max: 2.0
     left_zero_angle: 1.4 # Bottom reference, output shaft rad
     right_zero_angle: -0.5
+    sync_velocity_kp: 0.05 # Cross-coupled velocity difference compensation
     sync_kp: 0.1 # Position error (rad) -> differential velocity (rad/s); both switches MIDDLE
     max_sync_velocity: 2.0 # Maximum correction per motor, rad/s
-
-left_velocity_pid_controller:
-  ros__parameters:
-    measurement: /dart/left_motor/velocity
-    setpoint: /dart/left_motor/control_velocity
-    control: /dart/left_motor/control_torque
-    kp: 0.3036926
-    ki: 0.0
-    kd: 0.009373434
-    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
-    output_max: 0.18
-
-right_velocity_pid_controller:
-  ros__parameters:
-    measurement: /dart/right_motor/velocity
-    setpoint: /dart/right_motor/control_velocity
-    control: /dart/right_motor/control_torque
-    kp: 0.3036926
-    ki: 0.0
-    kd: 0.009373434
-    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
-    output_max: 0.18
-
-up_velocity_pid_controller:
-  ros__parameters:
-    measurement: /dart/up_motor/velocity
-    setpoint: /dart/up_motor/control_velocity
-    control: /dart/up_motor/control_torque
-    kp: 0.3036926
-    ki: 0.0
-    kd: 0.009373434
-    output_min: -0.18 # Output shaft N*m; about -1 A with default M2006 gearing
-    output_max: 0.18
+    left_velocity_kp: 0.3036926
+    left_velocity_ki: 0.0
+    left_velocity_kd: 0.009373434
+    left_velocity_output_min: -0.18
+    left_velocity_output_max: 0.18
+    right_velocity_kp: 0.3036926
+    right_velocity_ki: 0.0
+    right_velocity_kd: 0.009373434
+    right_velocity_output_min: -0.18
+    right_velocity_output_max: 0.18
+    up_velocity_kp: 0.3036926
+    up_velocity_ki: 0.0
+    up_velocity_kd: 0.009373434
+    up_velocity_output_min: -0.18
+    up_velocity_output_max: 0.18
 
 value_broadcaster:
   ros__parameters:
     forward_list:
+      - /gantry/pitch/target
+      - /gantry/pitch/error
       - /gantry/imu/roll
       - /gantry/imu/pitch
       - /gantry/imu/yaw
