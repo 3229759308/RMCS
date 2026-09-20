@@ -21,8 +21,12 @@ gantry_controller:
     horizontal_max_velocity: 10.0 # Output shaft rad/s at full stick
     up_max_velocity: 10.0
     joystick_deadzone: 0.05
-    left_zero_angle: 1.4 # Bottom reference, output shaft rad
-    right_zero_angle: -0.5
+    # Both switches UP: find and record dynamic left/right zeros in controller memory.
+    homing_speed: 1.0 # Positive magnitude in rad/s; downward command is negative
+    homing_velocity_threshold: 0.02 # rad/s; near-zero speed after downward motion
+    homing_torque_threshold: 0.01 # N*m; minimum absolute torque at the stop
+    homing_confirm_time: 0.1 # Seconds of continuous stop detection
+    homing_timeout: 30.0 # Seconds before aborting homing
     sync_kp: 0.1 # Position error (rad) -> differential velocity (rad/s); both switches MIDDLE
     max_sync_velocity: 2.0 # Maximum correction per motor, rad/s
 

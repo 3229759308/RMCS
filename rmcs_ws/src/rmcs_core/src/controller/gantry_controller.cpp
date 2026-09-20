@@ -1,4 +1,5 @@
 #include <cmath>
+#include <chrono>
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
@@ -39,12 +40,29 @@ public:
             || joystick_deadzone_ >= 1.0)
             throw std::runtime_error("Invalid gantry velocity limits or joystick deadzone");
 
-        left_zero_angle_ = get_parameter("left_zero_angle").as_double();
-        right_zero_angle_ = get_parameter("right_zero_angle").as_double();
+        // Defaults live here so existing launch/config files need no changes.
+        const auto parameter = [this](const char* name, double value) {
+            if (!has_parameter(name))
+                declare_parameter<double>(name, value);
+            return get_parameter(name).as_double();
+        };
+        homing_speed_ = parameter("homing_speed", 1.0);
+        homing_velocity_threshold_ = parameter("homing_velocity_threshold", 0.02);
+        homing_torque_threshold_ = parameter("homing_torque_threshold", 0.01);
+        homing_confirm_time_ = parameter("homing_confirm_time", 0.1);
+        homing_timeout_ = parameter("homing_timeout", 30.0);
+        if (!std::isfinite(homing_speed_) || homing_speed_ <= 0.0
+            || homing_speed_ > horizontal_max_velocity_
+            || !std::isfinite(homing_velocity_threshold_) || homing_velocity_threshold_ <= 0.0
+            || homing_velocity_threshold_ >= homing_speed_
+            || !std::isfinite(homing_torque_threshold_) || homing_torque_threshold_ <= 0.0
+            || !std::isfinite(homing_confirm_time_) || homing_confirm_time_ <= 0.0
+            || !std::isfinite(homing_timeout_) || homing_timeout_ <= homing_confirm_time_)
+            throw std::runtime_error("Invalid gantry homing parameters");
+
         sync_kp_ = get_parameter("sync_kp").as_double();
         max_sync_velocity_ = get_parameter("max_sync_velocity").as_double();
-        if (!std::isfinite(left_zero_angle_) || !std::isfinite(right_zero_angle_)
-            || !std::isfinite(sync_kp_) || sync_kp_ < 0.0
+        if (!std::isfinite(sync_kp_) || sync_kp_ < 0.0
             || !std::isfinite(max_sync_velocity_) || max_sync_velocity_ < 0.0)
             throw std::runtime_error("Invalid gantry synchronization parameters");
 
@@ -75,9 +93,36 @@ public:
 
         if (!joystick_left_->allFinite() || !joystick_right_->allFinite() || *switch_left_ == Switch::UNKNOWN ||*switch_right_ == Switch::UNKNOWN ||
             (*switch_left_ == Switch::DOWN &&*switch_right_ == Switch::DOWN)) {
+            homing_active_ = false;
+            both_up_previous_ = (*switch_left_ == Switch::UP && *switch_right_ == Switch::UP);
             *left_motor_control_velocity_ = nan_;
             *right_motor_control_velocity_ = nan_;
             *up_motor_control_velocity_ = nan_;
+            return;
+        }
+
+        const bool both_up = *switch_left_ == Switch::UP && *switch_right_ == Switch::UP;
+        if (both_up && !both_up_previous_) {
+            left_homing_ = {};
+            right_homing_ = {};
+            homing_started_ = Clock::now();
+            homing_active_ = true;
+            RCLCPP_INFO(logger_, "Gantry homing started at %.3f rad/s downward", homing_speed_);
+        }
+        both_up_previous_ = both_up;
+        if (both_up) {
+            update_homing();
+            return;
+        }
+        // Leaving both-UP cancels an incomplete attempt without changing the last zero pair.
+        homing_active_ = false;
+
+        // Manual modes remain available before homing, but synchronized mode needs valid zeros.
+        const bool both_middle = *switch_left_ == Switch::MIDDLE && *switch_right_ == Switch::MIDDLE;
+        if (both_middle && !zero_valid_) {
+            *left_motor_control_velocity_ = 0.0;
+            *right_motor_control_velocity_ = 0.0;
+            *up_motor_control_velocity_ = 0.0;
             return;
         }
 
@@ -102,7 +147,7 @@ public:
 
         // Both motor angles must increase in the same direction of gantry travel.
         // Use continuous output-shaft angles, not wrapped single-turn differences.
-        if (*switch_left_ == Switch::MIDDLE && *switch_right_ == Switch::MIDDLE) {
+        if (both_middle) {
             if (!std::isfinite(*left_motor_angle_) || !std::isfinite(*right_motor_angle_)) {
                 *left_motor_control_velocity_ = nan_;
                 *right_motor_control_velocity_ = nan_;
@@ -124,12 +169,88 @@ public:
 private:
     static constexpr double nan_ = std::numeric_limits<double>::quiet_NaN();
 
+    using Clock = std::chrono::steady_clock;
+    struct HomingMotor {
+        bool moved = false;
+        bool confirming = false;
+        bool done = false;
+        Clock::time_point stopped_since{};
+        double zero = 0.0;
+    };
+
+    void update_homing_motor(
+        HomingMotor& state, double velocity, double torque, double angle,
+        OutputInterface<double>& command, Clock::time_point now) {
+        if (state.done) {
+            *command = 0.0;
+            return;
+        }
+        *command = -homing_speed_;
+        // Require observed downward motion first: startup standstill is not a zero.
+        if (velocity < -homing_velocity_threshold_)
+            state.moved = true;
+        if (!state.moved || std::abs(velocity) > homing_velocity_threshold_
+            || std::abs(torque) < homing_torque_threshold_) {
+            state.confirming = false;
+            return;
+        }
+        if (!state.confirming) {
+            state.confirming = true;
+            state.stopped_since = now;
+        }
+        if (std::chrono::duration<double>(now - state.stopped_since).count() >= homing_confirm_time_) {
+            state.zero = angle;
+            state.done = true;
+            *command = 0.0;
+        }
+    }
+
+    void update_homing() {
+        *left_motor_control_velocity_ = 0.0;
+        *right_motor_control_velocity_ = 0.0;
+        *up_motor_control_velocity_ = 0.0;
+        if (!homing_active_)
+            return;
+        const auto now = Clock::now();
+        if (!std::isfinite(*left_motor_angle_) || !std::isfinite(*right_motor_angle_)
+            || !std::isfinite(*left_motor_velocity_) || !std::isfinite(*right_motor_velocity_)
+            || !std::isfinite(*left_motor_torque_) || !std::isfinite(*right_motor_torque_)
+            || std::chrono::duration<double>(now - homing_started_).count() >= homing_timeout_) {
+            homing_active_ = false;
+            RCLCPP_WARN(logger_, "Gantry homing aborted: invalid feedback or timeout; re-enter both-UP to retry");
+            return;
+        }
+        update_homing_motor(left_homing_, *left_motor_velocity_, *left_motor_torque_,
+                            *left_motor_angle_, left_motor_control_velocity_, now);
+        update_homing_motor(right_homing_, *right_motor_velocity_, *right_motor_torque_,
+                            *right_motor_angle_, right_motor_control_velocity_, now);
+        if (left_homing_.done && right_homing_.done) {
+            left_zero_angle_ = left_homing_.zero;
+            right_zero_angle_ = right_homing_.zero;
+            zero_valid_ = true;
+            homing_active_ = false;
+            RCLCPP_INFO(logger_, "Gantry zero recorded: left=%.6f, right=%.6f rad",
+                        left_zero_angle_, right_zero_angle_);
+        }
+    }
+
     rclcpp::Logger logger_;
+    double homing_speed_;
+    double homing_velocity_threshold_;
+    double homing_torque_threshold_;
+    double homing_confirm_time_;
+    double homing_timeout_;
+    HomingMotor left_homing_;
+    HomingMotor right_homing_;
+    Clock::time_point homing_started_{};
+    bool homing_active_ = false;
+    bool both_up_previous_ = false;
+    bool zero_valid_ = false;
     double horizontal_max_velocity_;
     double up_max_velocity_;
     double joystick_deadzone_;
-    double left_zero_angle_;
-    double right_zero_angle_;
+    double left_zero_angle_ = 0.0;
+    double right_zero_angle_ = 0.0;
     double sync_kp_;
     double max_sync_velocity_;
 
