@@ -60,7 +60,9 @@ public:
             device::DjiMotor::Config{device::DjiMotor::Type::kM2006, 2}.enable_multi_turn_angle());
         
         up_motor_.configure(
-            device::DjiMotor::Config{device::DjiMotor::Type::kM2006, 1}.enable_multi_turn_angle());
+            device::DjiMotor::Config{device::DjiMotor::Type::kM2006, 1}
+                .enable_multi_turn_angle()
+                .set_reversed());
         
         // RPY uses R = Rz(yaw) * Ry(pitch) * Rx(roll), in radians.
         const auto unavailable = std::numeric_limits<double>::quiet_NaN();

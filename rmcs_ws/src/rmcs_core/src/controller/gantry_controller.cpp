@@ -62,7 +62,7 @@ public:
             || !std::isfinite(homing_timeout_) || homing_timeout_ <= homing_confirm_time_)
             throw std::runtime_error("Invalid gantry homing parameters");
 
-        pitch_target_rate_ = parameter("pitch_target_rate", 0.1);
+        pitch_target_rate_ = parameter("pitch_target_rate", 0.1 / 3.0);
         pitch_max_offset_ = parameter("pitch_max_offset", 0.5);
         pitch_velocity_direction_ = parameter("pitch_velocity_direction", 1.0);
         if (!std::isfinite(pitch_target_rate_) || pitch_target_rate_ <= 0.0
@@ -162,12 +162,13 @@ public:
                 (std::abs(value) - joystick_deadzone_) / (1.0 - joystick_deadzone_), value);
         };
         if (pitch_mode) {
-            update_pitch(apply_deadzone(joystick_right_->x()));
+            update_pitch(
+                apply_deadzone(joystick_right_->x()), apply_deadzone(joystick_right_->y()));
             return;
         }
 
         // Left stick trims each motor independently; right stick commands common motion.
-        // Reverse both right-stick axes to match the mechanism's physical direction.
+        // Reverse common gantry motion; yaw direction is configured on the motor.
         const double common_command = -apply_deadzone(joystick_right_->x());
         *left_motor_control_velocity_ = std::clamp(
             common_command + apply_deadzone(joystick_left_->x()), -1.0, 1.0)
@@ -175,7 +176,7 @@ public:
         *right_motor_control_velocity_ = std::clamp(
             common_command + apply_deadzone(joystick_left_->y()), -1.0, 1.0)
             * horizontal_max_velocity_;
-        *up_motor_control_velocity_ = -apply_deadzone(joystick_right_->y()) * up_max_velocity_;
+        *up_motor_control_velocity_ = apply_deadzone(joystick_right_->y()) * up_max_velocity_;
 
         // Both motor angles must increase in the same direction of gantry travel.
         // Use continuous output-shaft angles, not wrapped single-turn differences.
@@ -235,7 +236,7 @@ private:
             -horizontal_max_velocity_, horizontal_max_velocity_);
     }
 
-    void update_pitch(double joystick) {
+    void update_pitch(double joystick, double yaw_joystick) {
         *left_motor_control_velocity_ = 0.0;
         *right_motor_control_velocity_ = 0.0;
         *up_motor_control_velocity_ = 0.0;
@@ -254,13 +255,15 @@ private:
             // Keep roll continuous across +/-pi; the motor sync angles are already multi-turn.
             pitch_feedback_ += std::remainder(*imu_roll_ - last_imu_roll_, 2.0 * std::numbers::pi);
             pitch_target_angle_ = std::clamp(
-                pitch_target_angle_ + joystick * pitch_target_rate_ / *update_rate_,
+                pitch_target_angle_ - joystick * pitch_target_rate_ / *update_rate_,
                 pitch_origin_ - pitch_max_offset_, pitch_origin_ + pitch_max_offset_);
         }
         last_imu_roll_ = *imu_roll_;
         *pitch_measurement_ = pitch_feedback_;
         *pitch_target_ = pitch_target_angle_;
         *pitch_enabled_ = true;
+        // Yaw uses a velocity setpoint only; centered stick commands zero speed.
+        *up_motor_control_velocity_ = yaw_joystick * up_max_velocity_;
         apply_sync_correction();
     }
 
@@ -280,9 +283,9 @@ private:
             *command = 0.0;
             return;
         }
-        *command = -homing_speed_;
+        *command = homing_speed_;
         // Require observed downward motion first: startup standstill is not a zero.
-        if (velocity < -homing_velocity_threshold_)
+        if (velocity > homing_velocity_threshold_)
             state.moved = true;
         if (!state.moved || std::abs(velocity) > homing_velocity_threshold_
             || std::abs(torque) < homing_torque_threshold_) {
