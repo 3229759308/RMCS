@@ -6,6 +6,7 @@ rmcs_executor:
       - rmcs_core::hardware::GantryControlHardware -> gantry_control_hardware
 
       - rmcs_core::controller::GantryController -> gantry_controller
+      - rmcs_core::controller::pid::PidController -> gantry_pitch_pid_controller
       - rmcs_core::controller::pid::PidController -> left_velocity_pid_controller
       - rmcs_core::controller::pid::PidController -> right_velocity_pid_controller
       - rmcs_core::controller::pid::PidController -> up_velocity_pid_controller
@@ -27,8 +28,23 @@ gantry_controller:
     homing_torque_threshold: 0.01 # N*m; minimum absolute torque at the stop
     homing_confirm_time: 0.1 # Seconds of continuous stop detection
     homing_timeout: 30.0 # Seconds before aborting homing
-    sync_kp: 0.1 # Position error (rad) -> differential velocity (rad/s); both switches MIDDLE
+    # Left UP / right MIDDLE after homing: IMU roll is gantry pitch.
+    pitch_target_rate: 0.1 # Target rad/s at full right-stick UP; centered stick holds target
+    pitch_max_offset: 0.5 # Target range +/-rad relative to the angle captured on mode entry
+    pitch_velocity_direction: 1.0 # Set to -1.0 if positive motor velocity decreases IMU roll
+    sync_kp: 0.1 # Multi-turn position error -> differential velocity; both-MIDDLE and pitch mode
     max_sync_velocity: 2.0 # Maximum correction per motor, rad/s
+
+gantry_pitch_pid_controller:
+  ros__parameters:
+    measurement: /gantry/pitch/measurement
+    setpoint: /gantry/pitch/target
+    control: /gantry/pitch/control_velocity
+    kp: 1.0 # Pitch error rad -> common left/right output-shaft rad/s; tune on hardware
+    ki: 0.0
+    kd: 0.0
+    output_min: -2.0
+    output_max: 2.0
 
 left_velocity_pid_controller:
   ros__parameters:
@@ -66,6 +82,9 @@ up_velocity_pid_controller:
 value_broadcaster:
   ros__parameters:
     forward_list:
+      - /gantry/pitch/measurement
+      - /gantry/pitch/target
+      - /gantry/pitch/control_velocity
       - /gantry/imu/roll
       - /gantry/imu/pitch
       - /gantry/imu/yaw
