@@ -9,8 +9,8 @@
 #include <rclcpp/node.hpp>
 #include <rmcs_description/tf_description.hpp>
 #include <rmcs_executor/component.hpp>
-#include <rmcs_msgs/keyboard.hpp>
-#include <rmcs_msgs/mouse.hpp>
+// #include <rmcs_msgs/keyboard.hpp>
+// #include <rmcs_msgs/mouse.hpp>
 #include <rmcs_msgs/switch.hpp>
 
 namespace rmcs_core::controller::gimbal {
@@ -31,23 +31,23 @@ public:
 
         get_parameter("pitch_torque_control", pitch_torque_control_enabled_);
         get_parameter("manual_joystick_sensitivity", joystick_sensitivity_);
-        get_parameter("manual_mouse_sensitivity", mouse_sensitivity_);
+        // get_parameter("manual_mouse_sensitivity", mouse_sensitivity_);
 
         get_parameter_or("pitch_gravity_ff_gain", pitch_gravity_ff_gain_, 0.0);
         get_parameter_or("pitch_gravity_ff_phase", pitch_gravity_ff_phase_, 0.0);
-        get_parameter_or("yaw_ref_velocity_gain", yaw_ref_velocity_gain_, 1.0);
-        get_parameter_or("pitch_ref_velocity_gain", pitch_ref_velocity_gain_, 1.0);
-        get_parameter_or("yaw_velocity_ff_gain", yaw_velocity_ff_gain_, 0.0);
-        get_parameter_or("yaw_acceleration_ff_gain", yaw_acceleration_ff_gain_, 0.0);
-        get_parameter_or("pitch_velocity_ff_gain", pitch_velocity_ff_gain_, 0.0);
-        get_parameter_or("pitch_acceleration_ff_gain", pitch_acceleration_ff_gain_, 0.0);
+        // get_parameter_or("yaw_ref_velocity_gain", yaw_ref_velocity_gain_, 1.0);
+        // get_parameter_or("pitch_ref_velocity_gain", pitch_ref_velocity_gain_, 1.0);
+        // get_parameter_or("yaw_velocity_ff_gain", yaw_velocity_ff_gain_, 0.0);
+        // get_parameter_or("yaw_acceleration_ff_gain", yaw_acceleration_ff_gain_, 0.0);
+        // get_parameter_or("pitch_velocity_ff_gain", pitch_velocity_ff_gain_, 0.0);
+        // get_parameter_or("pitch_acceleration_ff_gain", pitch_acceleration_ff_gain_, 0.0);
         get_parameter_or("ctrl_hold_pitch_target_angle", ctrl_hold_pitch_target_angle_, 0.0);
     }
 
     auto update() -> void override {
         const auto switch_right = *input_.switch_right;
         const auto switch_left = *input_.switch_left;
-        const auto keyboard = *input_.keyboard;
+        // const auto keyboard = *input_.keyboard;
 
         using namespace rmcs_msgs;
         if ((switch_left == Switch::UNKNOWN || switch_right == Switch::UNKNOWN)
@@ -56,7 +56,8 @@ public:
             return;
         }
 
-        update_pitch_lock_state(switch_left, switch_right, keyboard);
+        // update_pitch_lock_state(switch_left, switch_right, keyboard);
+        update_pitch_lock_state(switch_left, switch_right);
 
         if (ctrl_hold_requested()) {
             update_ctrl_hold_control();
@@ -64,30 +65,35 @@ public:
             deactivate_ctrl_hold();
         }
 
-        const auto auto_aim_active = auto_aim_requested() && input_.auto_aim_should_control.ready()
-                                  && *input_.auto_aim_should_control
-                                  && input_.auto_aim_control_direction.ready()
-                                  && input_.auto_aim_control_direction->allFinite()
-                                  && !input_.auto_aim_control_direction->isZero();
-        const auto angle_error =
-            auto_aim_active ? update_auto_aim_control() : update_manual_control();
+        // const auto auto_aim_active = auto_aim_requested() && input_.auto_aim_should_control.ready()
+                                  // && *input_.auto_aim_should_control
+                                  // && input_.auto_aim_control_direction.ready()
+                                  // && input_.auto_aim_control_direction->allFinite()
+                                  // && !input_.auto_aim_control_direction->isZero();
+        // const auto angle_error =
+            // auto_aim_active ? update_auto_aim_control() : update_manual_control();
+
+        const auto angle_error = update_manual_control();
 
         *output_.yaw_angle_error = angle_error.yaw_angle_error;
         if (!ctrl_hold_active_)
             *output_.pitch_angle_error = angle_error.pitch_angle_error;
 
-        const auto trajectory_ff = trajectory_feedforward(auto_aim_active);
+        // const auto trajectory_ff = trajectory_feedforward(auto_aim_active);
 
         if (!std::isfinite(angle_error.yaw_angle_error)) {
             yaw_angle_pid_.reset();
             yaw_velocity_pid_.reset();
             *output_.yaw_control_torque = kNaN;
         } else {
-            const auto yaw_velocity_ref = yaw_angle_pid_.update(angle_error.yaw_angle_error)
-                                        + trajectory_ff.yaw_ref_velocity;
+            // const auto yaw_velocity_ref = yaw_angle_pid_.update(angle_error.yaw_angle_error)
+                                        // + trajectory_ff.yaw_ref_velocity;
+            const auto yaw_velocity_ref = yaw_angle_pid_.update(angle_error.yaw_angle_error);
+            // *output_.yaw_control_torque =
+                // yaw_velocity_pid_.update(yaw_velocity_ref - *input_.yaw_velocity_imu)
+                // + trajectory_ff.yaw_velocity + trajectory_ff.yaw_acceleration;
             *output_.yaw_control_torque =
-                yaw_velocity_pid_.update(yaw_velocity_ref - *input_.yaw_velocity_imu)
-                + trajectory_ff.yaw_velocity + trajectory_ff.yaw_acceleration;
+                yaw_velocity_pid_.update(yaw_velocity_ref - *input_.yaw_velocity_imu);
         }
 
         if (!ctrl_hold_active_) {
@@ -98,16 +104,21 @@ public:
                 *output_.pitch_control_torque = kNaN;
             } else {
                 const auto pitch_gravity_ff = pitch_gravity_feedforward();
+                // const auto pitch_velocity_ref =
+                    // pitch_angle_pid_.update(angle_error.pitch_angle_error)
+                    // + trajectory_ff.pitch_ref_velocity;
                 const auto pitch_velocity_ref =
-                    pitch_angle_pid_.update(angle_error.pitch_angle_error)
-                    + trajectory_ff.pitch_ref_velocity;
+                    pitch_angle_pid_.update(angle_error.pitch_angle_error);
 
                 if (pitch_torque_control_enabled_) {
                     *output_.pitch_control_velocity = kNaN;
+                    // *output_.pitch_control_torque =
+                        // pitch_velocity_pid_.update(pitch_velocity_ref - *input_.pitch_velocity_imu)
+                        // + pitch_gravity_ff + trajectory_ff.pitch_velocity
+                        // + trajectory_ff.pitch_acceleration;
                     *output_.pitch_control_torque =
                         pitch_velocity_pid_.update(pitch_velocity_ref - *input_.pitch_velocity_imu)
-                        + pitch_gravity_ff + trajectory_ff.pitch_velocity
-                        + trajectory_ff.pitch_acceleration;
+                        + pitch_gravity_ff;
                 } else {
                     pitch_velocity_pid_.reset();
                     *output_.pitch_control_velocity = pitch_velocity_ref;
@@ -133,40 +144,40 @@ private:
     struct Input {
         explicit Input(rmcs_executor::Component& component) {
             component.register_input("/remote/joystick/left", joystick_left);
-            component.register_input("/remote/keyboard", keyboard);
+            // component.register_input("/remote/keyboard", keyboard);
             component.register_input("/remote/switch/right", switch_right);
             component.register_input("/remote/switch/left", switch_left);
-            component.register_input("/remote/mouse/velocity", mouse_velocity);
-            component.register_input("/remote/mouse", mouse);
+            // component.register_input("/remote/mouse/velocity", mouse_velocity);
+            // component.register_input("/remote/mouse", mouse);
             component.register_input("/predefined/update_rate", update_rate, false);
 
             component.register_input("/gimbal/pitch/angle", pitch_angle);
             component.register_input("/gimbal/yaw/velocity_imu", yaw_velocity_imu);
             component.register_input("/gimbal/pitch/velocity_imu", pitch_velocity_imu);
 
-            component.register_input("/auto_aim/should_control", auto_aim_should_control, false);
-            component.register_input(
-                "/auto_aim/control_direction", auto_aim_control_direction, false);
-            component.register_input("/auto_aim/ff_v", auto_aim_ff_v, false);
-            component.register_input("/auto_aim/ff_a", auto_aim_ff_a, false);
+            // component.register_input("/auto_aim/should_control", auto_aim_should_control, false);
+            // component.register_input(
+                // "/auto_aim/control_direction", auto_aim_control_direction, false);
+            // component.register_input("/auto_aim/ff_v", auto_aim_ff_v, false);
+            // component.register_input("/auto_aim/ff_a", auto_aim_ff_a, false);
         }
 
         InputInterface<Eigen::Vector2d> joystick_left;
-        InputInterface<rmcs_msgs::Keyboard> keyboard;
+        // InputInterface<rmcs_msgs::Keyboard> keyboard;
         InputInterface<rmcs_msgs::Switch> switch_right;
         InputInterface<rmcs_msgs::Switch> switch_left;
-        InputInterface<Eigen::Vector2d> mouse_velocity;
-        InputInterface<rmcs_msgs::Mouse> mouse;
+        // InputInterface<Eigen::Vector2d> mouse_velocity;
+        // InputInterface<rmcs_msgs::Mouse> mouse;
         InputInterface<double> update_rate;
 
         InputInterface<double> pitch_angle;
         InputInterface<double> yaw_velocity_imu;
         InputInterface<double> pitch_velocity_imu;
 
-        InputInterface<bool> auto_aim_should_control;
-        InputInterface<Eigen::Vector3d> auto_aim_control_direction;
-        InputInterface<Eigen::Vector3d> auto_aim_ff_v;
-        InputInterface<Eigen::Vector3d> auto_aim_ff_a;
+        // InputInterface<bool> auto_aim_should_control;
+        // InputInterface<Eigen::Vector3d> auto_aim_control_direction;
+        // InputInterface<Eigen::Vector3d> auto_aim_ff_v;
+        // InputInterface<Eigen::Vector3d> auto_aim_ff_a;
     } input_{*this};
 
     struct Output {
@@ -200,19 +211,20 @@ private:
     }
 
     auto manual_yaw_shift() const -> double {
-        return joystick_sensitivity_ * input_.joystick_left->y()
-             + mouse_sensitivity_ * input_.mouse_velocity->y();
+        // return joystick_sensitivity_ * input_.joystick_left->y()
+             // + mouse_sensitivity_ * input_.mouse_velocity->y();
+        return joystick_sensitivity_ * input_.joystick_left->y();
     }
 
-    auto auto_aim_requested() const -> bool {
-        return input_.mouse->right || *input_.switch_right == rmcs_msgs::Switch::UP;
-    }
+    // auto auto_aim_requested() const -> bool {
+        // return input_.mouse->right || *input_.switch_right == rmcs_msgs::Switch::UP;
+    // }
 
-    auto update_auto_aim_control() -> TwoAxisGimbalSolver::AngleError {
-        return gimbal_solver_.update(
-            TwoAxisGimbalSolver::SetControlDirection{
-                OdomImu::DirectionVector{*input_.auto_aim_control_direction}});
-    }
+    // auto update_auto_aim_control() -> TwoAxisGimbalSolver::AngleError {
+        // return gimbal_solver_.update(
+            // TwoAxisGimbalSolver::SetControlDirection{
+                // OdomImu::DirectionVector{*input_.auto_aim_control_direction}});
+    // }
 
     auto update_manual_control() -> TwoAxisGimbalSolver::AngleError {
         if (!gimbal_solver_.enabled())
@@ -220,8 +232,9 @@ private:
 
         const auto yaw_shift = manual_yaw_shift();
 
-        const auto pitch_shift = -joystick_sensitivity_ * input_.joystick_left->x()
-                               + mouse_sensitivity_ * input_.mouse_velocity->x();
+        // const auto pitch_shift = -joystick_sensitivity_ * input_.joystick_left->x()
+                               // + mouse_sensitivity_ * input_.mouse_velocity->x();
+        const auto pitch_shift = -joystick_sensitivity_ * input_.joystick_left->x();
         return gimbal_solver_.update(TwoAxisGimbalSolver::SetControlShift{yaw_shift, pitch_shift});
     }
 
@@ -232,43 +245,45 @@ private:
              * std::sin(gimbal_solver_.gimbal_world_pitch() - pitch_gravity_ff_phase_);
     }
 
-    struct TrajectoryFeedforward {
-        double yaw_ref_velocity = 0.0;
-        double pitch_ref_velocity = 0.0;
-        double yaw_velocity = 0.0;
-        double yaw_acceleration = 0.0;
-        double pitch_velocity = 0.0;
-        double pitch_acceleration = 0.0;
-    };
+    // struct TrajectoryFeedforward {
+        // double yaw_ref_velocity = 0.0;
+        // double pitch_ref_velocity = 0.0;
+        // double yaw_velocity = 0.0;
+        // double yaw_acceleration = 0.0;
+        // double pitch_velocity = 0.0;
+        // double pitch_acceleration = 0.0;
+    // };
 
-    auto trajectory_feedforward(bool auto_aim_active) const -> TrajectoryFeedforward {
-        if (!auto_aim_active || !input_.auto_aim_ff_v.ready() || !input_.auto_aim_ff_a.ready()
-            || !input_.auto_aim_ff_v->allFinite() || !input_.auto_aim_ff_a->allFinite())
-            return {};
+    // auto trajectory_feedforward(bool auto_aim_active) const -> TrajectoryFeedforward {
+        // if (!auto_aim_active || !input_.auto_aim_ff_v.ready() || !input_.auto_aim_ff_a.ready()
+            // || !input_.auto_aim_ff_v->allFinite() || !input_.auto_aim_ff_a->allFinite())
+            // return {};
 
-        const auto ff_v =
-            gimbal_solver_.odom_to_yaw_link(OdomImu::DirectionVector{*input_.auto_aim_ff_v});
-        const auto ff_a =
-            gimbal_solver_.odom_to_yaw_link(OdomImu::DirectionVector{*input_.auto_aim_ff_a});
-        return {
-            .yaw_ref_velocity = yaw_ref_velocity_gain_ * ff_v->z(),
-            .pitch_ref_velocity = pitch_ref_velocity_gain_ * ff_v->y(),
-            .yaw_velocity = yaw_velocity_ff_gain_ * ff_v->z(),
-            .yaw_acceleration = yaw_acceleration_ff_gain_ * ff_a->z(),
-            .pitch_velocity = pitch_velocity_ff_gain_ * ff_v->y(),
-            .pitch_acceleration = pitch_acceleration_ff_gain_ * ff_a->y(),
-        };
-    }
+        // const auto ff_v =
+            // gimbal_solver_.odom_to_yaw_link(OdomImu::DirectionVector{*input_.auto_aim_ff_v});
+        // const auto ff_a =
+            // gimbal_solver_.odom_to_yaw_link(OdomImu::DirectionVector{*input_.auto_aim_ff_a});
+        // return {
+            // .yaw_ref_velocity = yaw_ref_velocity_gain_ * ff_v->z(),
+            // .pitch_ref_velocity = pitch_ref_velocity_gain_ * ff_v->y(),
+            // .yaw_velocity = yaw_velocity_ff_gain_ * ff_v->z(),
+            // .yaw_acceleration = yaw_acceleration_ff_gain_ * ff_a->z(),
+            // .pitch_velocity = pitch_velocity_ff_gain_ * ff_v->y(),
+            // .pitch_acceleration = pitch_acceleration_ff_gain_ * ff_a->y(),
+        // };
+    // }
 
     auto update_pitch_lock_state(
-        rmcs_msgs::Switch switch_left, rmcs_msgs::Switch switch_right,
-        const rmcs_msgs::Keyboard& keyboard) -> void {
+        // rmcs_msgs::Switch switch_left, rmcs_msgs::Switch switch_right,
+        // const rmcs_msgs::Keyboard& keyboard) -> void {
+        rmcs_msgs::Switch switch_left, rmcs_msgs::Switch switch_right) -> void {
         if (switch_left == rmcs_msgs::Switch::DOWN && switch_right == rmcs_msgs::Switch::UP
             && last_switch_right_ == rmcs_msgs::Switch::MIDDLE) {
             suspension_on_by_switch_ = !suspension_on_by_switch_;
         }
 
-        pitch_lock_active_ = keyboard.ctrl || keyboard.e || suspension_on_by_switch_;
+        // pitch_lock_active_ = keyboard.ctrl || keyboard.e || suspension_on_by_switch_;
+        pitch_lock_active_ = suspension_on_by_switch_;
         last_switch_right_ = switch_right;
     }
 
@@ -367,17 +382,17 @@ private:
     };
 
     double joystick_sensitivity_ = 0.003;
-    double mouse_sensitivity_ = 0.5;
+    // double mouse_sensitivity_ = 0.5;
     bool pitch_torque_control_enabled_ = false;
     double ctrl_hold_pitch_target_angle_ = 0.0;
     double pitch_gravity_ff_gain_ = 0.0;
     double pitch_gravity_ff_phase_ = 0.0;
-    double yaw_ref_velocity_gain_ = 1.0;
-    double pitch_ref_velocity_gain_ = 1.0;
-    double yaw_velocity_ff_gain_ = 0.0;
-    double yaw_acceleration_ff_gain_ = 0.0;
-    double pitch_velocity_ff_gain_ = 0.0;
-    double pitch_acceleration_ff_gain_ = 0.0;
+    // double yaw_ref_velocity_gain_ = 1.0;
+    // double pitch_ref_velocity_gain_ = 1.0;
+    // double yaw_velocity_ff_gain_ = 0.0;
+    // double yaw_acceleration_ff_gain_ = 0.0;
+    // double pitch_velocity_ff_gain_ = 0.0;
+    // double pitch_acceleration_ff_gain_ = 0.0;
     bool pitch_lock_active_ = false;
     bool suspension_on_by_switch_ = false;
     rmcs_msgs::Switch last_switch_right_ = rmcs_msgs::Switch::UNKNOWN;
