@@ -42,7 +42,16 @@ rmcs_executor:
 yaw_excitation:
   ros__parameters:
     enabled: true
-    standard_test: true # protocol v2; false retains the standalone chirp
+    standard_test: true # false retains the standalone chirp for mode 1
+    # Supplement protocol v3: left UP/right MIDDLE = direct yaw torque (mode 3);
+    # left MIDDLE/right MIDDLE = yaw velocity PID only (mode 4). Pitch stays +5 deg.
+    # Wait delay_s, execute torque 74 s / velocity 112 s once, then zero yaw torque.
+    # Speed ladder holds 3 s per level for steady state; torque pulses last 0.5 s.
+    # Original double DOWN / remote UNKNOWN behavior is retained. No added supplement protection.
+    supplement_enabled: true
+    supplement_torque_nm: 2.5 # Rated torque; main test amplitude in N*m.
+    supplement_peak_torque_nm: 4.5 # Separate +/- peak pulses, 0.5 s each; not a clamp.
+    supplement_velocity_rad_s: 1.0 # Peak speed reference; no yaw position PID/feedforward.
     switch_left: "up"
     switch_right: "down"
     manual_switch_left: "middle" # manual yaw with pitch fixed, also waits delay_s
@@ -91,6 +100,8 @@ value_collector:
       - /gimbal/pitch/control_angle_error
       - /gimbal/pitch/control_torque
       - /gimbal/pitch/torque
+      - /gimbal/yaw/excitation/torque_reference_nm
+      - /gimbal/yaw/supplement/velocity_error_rad_s
       - /gimbal/yaw/excitation/state
       - /gimbal/yaw/excitation/elapsed_s
       - /gimbal/yaw/excitation/offset_rad
@@ -105,6 +116,9 @@ value_collector:
       - /gimbal/yaw/excitation/mode
       # Stage 1 prepare, 2 initial hold, 3 ladder, 4 acceleration, 5 chirp,
       # 6 held-out mixed trajectory, 7 final hold, 8 completed, 9 manual.
+      # Supplement: 10 zero, 11 +/- small-signal/ladder pulses, 12 reversals,
+      # 13 cosine ramps, 14 0.1->5 Hz chirp, 15 held-out mixed pulses,
+      # 16 final zero, 17 completed, 18 peak torque pulses. Mode distinguishes units.
       - /gimbal/yaw/excitation/stage
       - /gimbal/yaw/excitation/segment
       - /gimbal/yaw/excitation/stage_elapsed_s

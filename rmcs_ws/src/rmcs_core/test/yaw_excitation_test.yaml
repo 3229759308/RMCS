@@ -23,3 +23,20 @@ gimbal_test:
     pitch_velocity_ki: 0.0
     pitch_velocity_kd: 0.0
     pitch_torque_control: true
+
+single_loop_generator:
+  ros__parameters:
+    supplement_enabled: true
+bad_torque:
+  ros__parameters:
+    supplement_torque_nm: 0.0
+bad_speed:
+  ros__parameters:
+    supplement_velocity_rad_s: 0.0
+bad_peak:
+  ros__parameters:
+    supplement_peak_torque_nm: -1.0
+bad_switch:
+  ros__parameters:
+    supplement_enabled: true
+    switch_right: middle

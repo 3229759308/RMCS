@@ -1,4 +1,5 @@
 #include "controller/gimbal/yaw_test_sequence.hpp"
+#include "controller/gimbal/yaw_single_loop_sequence.hpp"
 
 #include <chrono>
 #include <limits>
@@ -12,7 +13,7 @@
 
 namespace rmcs_core::controller::gimbal {
 
-// Reference-only test component: never writes motor commands or changes PID gains.
+// Test reference generator; the gimbal controller owns motor commands and PID gains.
 class YawExcitation : public rmcs_executor::Component, public rclcpp::Node {
 public:
     YawExcitation()
@@ -59,6 +60,21 @@ public:
             || double_down(test_left_,test_right_) || double_down(manual_left_,manual_right_))
             throw std::invalid_argument("test switches must be distinct and cannot be double-down");
 
+        get_parameter_or("supplement_enabled", supplement_enabled_, false);
+        get_parameter_or("supplement_torque_nm", supplement_torque_, 2.5);
+        get_parameter_or("supplement_peak_torque_nm", supplement_peak_torque_, 4.5);
+        get_parameter_or("supplement_velocity_rad_s", supplement_velocity_, 1.0);
+        for (double value : {supplement_torque_, supplement_peak_torque_, supplement_velocity_})
+            if (!std::isfinite(value) || value <= 0)
+                throw std::invalid_argument("supplement amplitudes must be finite and positive");
+        const auto conflicts = [](auto left, auto right) {
+            return right == rmcs_msgs::Switch::MIDDLE
+                && (left == rmcs_msgs::Switch::UP || left == rmcs_msgs::Switch::MIDDLE);
+        };
+        if (supplement_enabled_ && (conflicts(test_left_, test_right_)
+                                   || conflicts(manual_left_, manual_right_)))
+            throw std::invalid_argument("supplement switch conflicts with existing test");
+        register_output(prefix_+"torque_reference_nm", torque_reference_, 0.0);
         register_input("/remote/switch/left", left_);
         register_input("/remote/switch/right", right_);
         register_input("/remote/joystick/left", joystick_);
@@ -71,12 +87,12 @@ public:
         register_output(prefix_+"velocity_rad_s", velocity_, 0.0);
         register_output(prefix_+"acceleration_rad_s2", acceleration_, 0.0);
         register_output(prefix_+"frequency_hz", frequency_, 0.0);
-        register_output(prefix_+"mode", mode_output_, 0.0); // 0 off, 1 auto, 2 manual
+        register_output(prefix_+"mode", mode_output_, 0.0); // 0 off, 1 auto, 2 manual, 3 torque, 4 velocity
         register_output(prefix_+"stage", stage_, 0.0);
         register_output(prefix_+"segment", segment_, 0.0);
         register_output(prefix_+"stage_elapsed_s", stage_elapsed_, 0.0);
         register_output(prefix_+"validation_segment", validation_segment_, 0.0);
-        register_output(prefix_+"protocol_version", protocol_version_, standard_test_ ? 2.0 : 1.0);
+        register_output(prefix_+"protocol_version", protocol_version_, supplement_enabled_ ? 3.0 : standard_test_ ? 2.0 : 1.0);
         register_output(prefix_+"session_id", session_id_, 0.0);
         register_output(prefix_+"reference_yaw_rad", reference_yaw_, kNaN);
         register_output(prefix_+"pitch_target_up_deg", pitch_target_, pitch_up_deg_);
@@ -87,7 +103,10 @@ public:
         register_output(prefix_+"switch_right", logged_right_, 0.0);
     }
 
-    void update() override {
+    void update() override { update_at(std::chrono::steady_clock::now()); }
+
+    // Explicit monotonic timestamp also permits deterministic hardware-free protocol tests.
+    void update_at(std::chrono::steady_clock::time_point now) {
         *logged_left_ = static_cast<double>(*left_);
         *logged_right_ = static_cast<double>(*right_);
         const auto current = fast_tf::cast<rmcs_description::OdomImu>(
@@ -95,7 +114,12 @@ public:
         const bool attitude_valid = current->allFinite() && current->head<2>().norm() >= 1e-6;
         *pitch_actual_ = attitude_valid
             ? std::asin(std::clamp(current->normalized().z(), -1.0, 1.0))*180/std::numbers::pi : kNaN;
+        *torque_reference_ = 0;
         const int requested = !enabled_ ? 0
+            : supplement_enabled_ && *right_ == rmcs_msgs::Switch::MIDDLE
+                && *left_ == rmcs_msgs::Switch::UP ? 3
+            : supplement_enabled_ && *right_ == rmcs_msgs::Switch::MIDDLE
+                && *left_ == rmcs_msgs::Switch::MIDDLE ? 4
             : (*left_ == test_left_ && *right_ == test_right_) ? 1
             : (*left_ == manual_left_ && *right_ == manual_right_) ? 2 : 0;
         if (!requested) {
@@ -107,7 +131,6 @@ public:
             *planned_duration_ = 0;
             return;
         }
-        const auto now = Clock::now();
         if (requested != mode_) {
             mode_ = requested;
             *mode_output_ = mode_;
@@ -121,7 +144,8 @@ public:
             previous_elapsed_ = 0;
             manual_ = {};
             *planned_duration_ = mode_ == 1
-                ? (standard_test_ ? sequence_.duration() : profile_.delay_s+profile_.duration_s) : 0;
+                ? (standard_test_ ? sequence_.duration() : profile_.delay_s+profile_.duration_s)
+                : mode_ >= 3 ? profile_.delay_s+single_loop_sequence().duration() : 0;
             if (!attitude_valid) { fault(); return; }
             const double elevation = pitch_up_deg_*std::numbers::pi/180;
             const auto heading = current->head<2>().normalized().eval();
@@ -132,7 +156,23 @@ public:
         if (*state_ == 4) return; // Fault remains latched until leaving/changing test mode.
         if (!attitude_valid) { fault(); return; }
         *elapsed_ = std::chrono::duration<double>(now-started_at_).count();
-        if (mode_ == 1 && standard_test_) {
+        if (mode_ >= 3) {
+            const double t = *elapsed_-profile_.delay_s;
+            const auto s = single_loop_sequence().sample(t);
+            *state_ = t < 0 ? 1 : t >= single_loop_sequence().duration() ? 3 : 2;
+            *stage_ = t < 0 ? 1 : s.stage;
+            *segment_ = s.segment; *stage_elapsed_ = t < 0 ? *elapsed_ : s.stage_elapsed;
+            *acceleration_ = kNaN; // Step commands have no finite acceleration reference.
+            *frequency_ = s.frequency; *validation_segment_ = s.stage == 15 ? 1 : 0;
+            *torque_reference_ = mode_ == 3
+                ? s.value*(s.stage == 18 ? supplement_peak_torque_ : supplement_torque_) : 0;
+            *velocity_ = mode_ == 4 ? s.value*supplement_velocity_ : 0;
+            // Follow measured heading for pitch solving; yaw position is bypassed.
+            initial_yaw_ = std::atan2(current->y(), current->x());
+            const double elevation = pitch_up_deg_*std::numbers::pi/180;
+            initial_direction_ = {std::cos(elevation)*std::cos(initial_yaw_),
+                                  std::cos(elevation)*std::sin(initial_yaw_), std::sin(elevation)};
+        } else if (mode_ == 1 && standard_test_) {
             const auto s = sequence_.sample(*elapsed_);
             *state_ = s.state; *offset_ = s.angle; *velocity_ = s.velocity;
             *acceleration_ = s.acceleration; *frequency_ = s.frequency;
@@ -159,7 +199,7 @@ public:
             *offset_ = manual_.angle; *velocity_ = manual_.velocity; *acceleration_ = manual_.acceleration;
         }
         previous_elapsed_ = *elapsed_;
-        *reference_yaw_ = initial_yaw_+*offset_;
+        *reference_yaw_ = mode_ >= 3 ? kNaN : initial_yaw_+*offset_;
         *direction_ = Eigen::AngleAxisd{std::remainder(*offset_,2*std::numbers::pi),Eigen::Vector3d::UnitZ()}
                     * initial_direction_;
     }
@@ -179,6 +219,7 @@ private:
     }
     void fault() {
         *state_ = 4;
+        *torque_reference_ = 0;
         *velocity_ = *acceleration_ = *frequency_ = 0;
         *reference_yaw_ = kNaN;
         direction_->setConstant(kNaN); // Controller clears both axes' commands.
@@ -187,6 +228,13 @@ private:
     const std::string prefix_ = "/gimbal/yaw/excitation/";
     YawExcitationProfile profile_;
     YawTestSequence sequence_;
+    const YawSingleLoopSequence& single_loop_sequence() const {
+        return mode_ == 4 ? velocity_sequence_ : torque_sequence_;
+    }
+    YawSingleLoopSequence torque_sequence_, velocity_sequence_{true};
+    bool supplement_enabled_ = false;
+    double supplement_torque_ = 2.5, supplement_peak_torque_ = 4.5, supplement_velocity_ = 1;
+    OutputInterface<double> torque_reference_;
     ManualYawTrajectory manual_;
     bool enabled_ = true, standard_test_ = true;
     int mode_ = 0;

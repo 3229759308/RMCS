@@ -42,11 +42,13 @@ pluginlib_export_plugin_description_file(rmcs_executor plugins.xml)
 
 if(BUILD_TESTING)
     enable_testing()
-    ament_auto_add_executable(yaw_excitation_test test/yaw_excitation_test.cpp)
-    # Do not install the hardware-free test fixture onto the robot.
-    list(REMOVE_ITEM ${PROJECT_NAME}_EXECUTABLES yaw_excitation_test)
-    add_test(NAME yaw_excitation_test COMMAND yaw_excitation_test
-        --ros-args --params-file ${CMAKE_CURRENT_SOURCE_DIR}/test/yaw_excitation_test.yaml)
+    foreach(test_name yaw_excitation_test yaw_single_loop_test)
+        ament_auto_add_executable(${test_name} test/${test_name}.cpp)
+        # Do not install the hardware-free test fixtures onto the robot.
+        list(REMOVE_ITEM ${PROJECT_NAME}_EXECUTABLES ${test_name})
+        add_test(NAME ${test_name} COMMAND ${test_name}
+            --ros-args --params-file ${CMAKE_CURRENT_SOURCE_DIR}/test/yaw_excitation_test.yaml)
+    endforeach()
 endif()
 
 ament_auto_package()

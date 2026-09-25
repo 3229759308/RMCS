@@ -45,6 +45,7 @@ public:
     }
 
     auto update() -> void override {
+        *output_.supplement_velocity_error = kNaN;
         const auto switch_right = *input_.switch_right;
         const auto switch_left = *input_.switch_left;
         // const auto keyboard = *input_.keyboard;
@@ -104,7 +105,25 @@ public:
 
         // const auto trajectory_ff = trajectory_feedforward(auto_aim_active);
 
-        if (!std::isfinite(angle_error.yaw_angle_error)) {
+        const double test_mode = excitation_selected && input_.excitation_mode.ready()
+            ? *input_.excitation_mode : 0;
+        if (test_mode == 3 || test_mode == 4) {
+            yaw_angle_pid_.reset();
+            *output_.yaw_angle_error = kNaN; // No position loop in either supplementary test.
+            // No supplemental clamp, speed trip or fault latch; use the original PID as-is.
+            if (!input_.excitation_state.ready() || *input_.excitation_state != 2) {
+                yaw_velocity_pid_.reset();
+                *output_.yaw_control_torque = 0;
+            } else if (test_mode == 3) {
+                yaw_velocity_pid_.reset();
+                *output_.yaw_control_torque = input_.torque_reference.ready()
+                    ? *input_.torque_reference : kNaN;
+            } else {
+                *output_.supplement_velocity_error = input_.velocity_reference.ready()
+                    ? *input_.velocity_reference-*input_.yaw_velocity_imu : kNaN;
+                *output_.yaw_control_torque = yaw_velocity_pid_.update(*output_.supplement_velocity_error);
+            }
+        } else if (!std::isfinite(angle_error.yaw_angle_error)) {
             yaw_angle_pid_.reset();
             yaw_velocity_pid_.reset();
             *output_.yaw_control_torque = kNaN;
@@ -174,6 +193,10 @@ private:
             // component.register_input("/remote/mouse", mouse);
             component.register_input("/predefined/update_rate", update_rate, false);
 
+            component.register_input("/gimbal/yaw/excitation/mode", excitation_mode, false);
+            component.register_input("/gimbal/yaw/excitation/state", excitation_state, false);
+            component.register_input("/gimbal/yaw/excitation/torque_reference_nm", torque_reference, false);
+            component.register_input("/gimbal/yaw/excitation/velocity_rad_s", velocity_reference, false);
             component.register_input("/gimbal/yaw/excitation/selected", excitation_selected, false);
             component.register_input("/gimbal/yaw/excitation/session_id", excitation_session, false);
             component.register_input("/gimbal/yaw/excitation/direction", excitation_direction, false);
@@ -196,6 +219,7 @@ private:
         // InputInterface<rmcs_msgs::Mouse> mouse;
         InputInterface<double> update_rate;
 
+        InputInterface<double> excitation_mode, excitation_state, torque_reference, velocity_reference;
         InputInterface<bool> excitation_selected;
         InputInterface<double> excitation_session;
         InputInterface<Eigen::Vector3d> excitation_direction;
@@ -211,6 +235,7 @@ private:
 
     struct Output {
         explicit Output(rmcs_executor::Component& component) {
+            component.register_output("/gimbal/yaw/supplement/velocity_error_rad_s", supplement_velocity_error, kNaN);
             component.register_output("/gimbal/yaw/control_torque", yaw_control_torque, kNaN);
             component.register_output("/gimbal/yaw/control_angle", yaw_control_angle, kNaN);
             component.register_output(
@@ -228,6 +253,7 @@ private:
         OutputInterface<double> pitch_control_angle;
         OutputInterface<double> yaw_angle_error;
         OutputInterface<double> pitch_angle_error;
+        OutputInterface<double> supplement_velocity_error;
     } output_{*this};
 
     auto ctrl_hold_requested() const -> bool { return pitch_lock_active_; }
