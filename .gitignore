@@ -79,3 +79,8 @@ develop_ws
 .codex/
 .mimo/
 CLAUDE.md
+
+# Local experiment data and test reports
+/data/
+/docs/yaw_identification/
+/docs/AGENTS.md

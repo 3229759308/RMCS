@@ -56,8 +56,28 @@ public:
             return;
         }
 
-        // update_pitch_lock_state(switch_left, switch_right, keyboard);
-        update_pitch_lock_state(switch_left, switch_right);
+        const bool excitation_selected = input_.excitation_selected.ready()
+                                      && *input_.excitation_selected;
+        const double session = input_.excitation_session.ready() ? *input_.excitation_session : 0;
+        if (excitation_selected != excitation_active_
+            || (excitation_selected && session != excitation_session_)) {
+            reset_all_controls();
+            excitation_active_ = excitation_selected;
+            excitation_session_ = session;
+            // Capture current pose when returning to manual instead of commanding level.
+            if (!excitation_selected)
+                gimbal_solver_.update(TwoAxisGimbalSolver::SetControlShift{0.0, 0.0});
+        }
+        if (excitation_selected) {
+            if (!input_.excitation_direction.ready()
+                || !input_.excitation_direction->allFinite()
+                || input_.excitation_direction->isZero()) {
+                reset_all_controls();
+                return;
+            }
+        } else {
+            update_pitch_lock_state(switch_left, switch_right);
+        }
 
         if (ctrl_hold_requested()) {
             update_ctrl_hold_control();
@@ -73,7 +93,10 @@ public:
         // const auto angle_error =
             // auto_aim_active ? update_auto_aim_control() : update_manual_control();
 
-        const auto angle_error = update_manual_control();
+        const auto angle_error = excitation_selected
+            ? gimbal_solver_.update(TwoAxisGimbalSolver::SetControlDirection{
+                  OdomImu::DirectionVector{*input_.excitation_direction}})
+            : update_manual_control();
 
         *output_.yaw_angle_error = angle_error.yaw_angle_error;
         if (!ctrl_hold_active_)
@@ -151,6 +174,9 @@ private:
             // component.register_input("/remote/mouse", mouse);
             component.register_input("/predefined/update_rate", update_rate, false);
 
+            component.register_input("/gimbal/yaw/excitation/selected", excitation_selected, false);
+            component.register_input("/gimbal/yaw/excitation/session_id", excitation_session, false);
+            component.register_input("/gimbal/yaw/excitation/direction", excitation_direction, false);
             component.register_input("/gimbal/pitch/angle", pitch_angle);
             component.register_input("/gimbal/yaw/velocity_imu", yaw_velocity_imu);
             component.register_input("/gimbal/pitch/velocity_imu", pitch_velocity_imu);
@@ -170,6 +196,9 @@ private:
         // InputInterface<rmcs_msgs::Mouse> mouse;
         InputInterface<double> update_rate;
 
+        InputInterface<bool> excitation_selected;
+        InputInterface<double> excitation_session;
+        InputInterface<Eigen::Vector3d> excitation_direction;
         InputInterface<double> pitch_angle;
         InputInterface<double> yaw_velocity_imu;
         InputInterface<double> pitch_velocity_imu;
@@ -347,6 +376,7 @@ private:
     }
 
     auto reset_all_controls() -> void {
+        excitation_active_ = false;
         deactivate_ctrl_hold();
         pitch_lock_active_ = false;
         suspension_on_by_switch_ = false;
@@ -397,6 +427,8 @@ private:
     bool suspension_on_by_switch_ = false;
     rmcs_msgs::Switch last_switch_right_ = rmcs_msgs::Switch::UNKNOWN;
     bool ctrl_hold_active_ = false;
+    bool excitation_active_ = false;
+    double excitation_session_ = 0;
 };
 
 } // namespace rmcs_core::controller::gimbal

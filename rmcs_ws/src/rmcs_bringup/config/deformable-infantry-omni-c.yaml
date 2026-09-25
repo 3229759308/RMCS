@@ -11,6 +11,7 @@ rmcs_executor:
       # - rmcs_core::referee::command::interaction::Ui -> referee_ui
       # - rmcs_core::referee::app::ui::DeformableInfantry -> referee_ui_infantry
 
+      - rmcs_core::controller::gimbal::YawExcitation -> yaw_excitation
       - rmcs_core::controller::gimbal::DeformableInfantryGimbalController -> gimbal_controller
 
       # - rmcs_core::controller::shooting::FrictionWheelController -> friction_wheel_controller
@@ -38,6 +39,38 @@ rmcs_executor:
       # - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
       - rmcs_core::debug::ValueCollector -> value_collector
 
+yaw_excitation:
+  ros__parameters:
+    enabled: true
+    standard_test: true # protocol v2; false retains the standalone chirp
+    switch_left: "up"
+    switch_right: "down"
+    manual_switch_left: "middle" # manual yaw with pitch fixed, also waits delay_s
+    manual_switch_right: "down"
+    manual_acceleration_rad_s2: 3.0
+    manual_deadband: 0.02
+    initial_hold_s: 10.0
+    final_hold_s: 10.0
+    ladder_speeds_rad_s: [0.3, 1.0, 2.0, 3.0]
+    ladder_hold_s: 5.0
+    ladder_stop_s: 2.0
+    ladder_acceleration_rad_s2: 2.0
+    acceleration_levels_rad_s2: [1.0, 3.0]
+    acceleration_speed_rad_s: 2.0
+    acceleration_hold_s: 2.0
+    acceleration_repeats: 2
+    mixed_speeds_rad_s: [0.25, 1.5, -0.5, 0.0, -2.5, 2.5, 0.75, 0.0]
+    mixed_transition_s: 2.5
+    mixed_hold_s: 2.5
+    delay_s: 5.0
+    pitch_up_deg: 5.0 # world-frame elevation above horizontal during test mode
+    duration_s: 40.0
+    ramp_s: 3.0
+    amplitude_rad: 0.50 # angle amplitude ceiling; smoothly decreases with frequency
+    max_velocity_rad_s: 3.79 # reference speed limit, includes envelope derivative
+    start_frequency_hz: 0.10
+    end_frequency_hz: 5.0 # same as start_frequency_hz for a fixed-frequency sine
+
 value_collector:
   ros__parameters:
     csv_path: "/tmp/yaw_identification_<timestamp>.csv"
@@ -48,11 +81,39 @@ value_collector:
       - /gimbal/yaw/velocity
       - /gimbal/yaw/velocity_imu
       - /gimbal/yaw/control_torque
-      # Motor feedback current converted to torque, not a torque-sensor measurement.
+      # Feedback torque (N*m) from received motor current, Kt and reduction ratio.
+      # Distinct from control_torque above; already used as identification input.
       - /gimbal/yaw/torque
       - /gimbal/yaw/control_angle_error
       - /gimbal/pitch/angle
       - /gimbal/pitch/velocity_imu
+      - /gimbal/pitch/velocity
+      - /gimbal/pitch/control_angle_error
+      - /gimbal/pitch/control_torque
+      - /gimbal/pitch/torque
+      - /gimbal/yaw/excitation/state
+      - /gimbal/yaw/excitation/elapsed_s
+      - /gimbal/yaw/excitation/offset_rad
+      - /gimbal/yaw/excitation/velocity_rad_s
+      - /gimbal/yaw/excitation/frequency_hz
+      - /gimbal/yaw/excitation/switch_left
+      - /gimbal/yaw/excitation/switch_right
+      - /gimbal/yaw/temperature
+      - /gimbal/pitch/temperature
+      - /gimbal/yaw/excitation/protocol_version
+      - /gimbal/yaw/excitation/session_id
+      - /gimbal/yaw/excitation/mode
+      # Stage 1 prepare, 2 initial hold, 3 ladder, 4 acceleration, 5 chirp,
+      # 6 held-out mixed trajectory, 7 final hold, 8 completed, 9 manual.
+      - /gimbal/yaw/excitation/stage
+      - /gimbal/yaw/excitation/segment
+      - /gimbal/yaw/excitation/stage_elapsed_s
+      - /gimbal/yaw/excitation/validation_segment
+      - /gimbal/yaw/excitation/reference_yaw_rad
+      - /gimbal/yaw/excitation/acceleration_rad_s2
+      - /gimbal/yaw/excitation/pitch_target_up_deg
+      - /gimbal/yaw/excitation/pitch_actual_up_deg
+      - /gimbal/yaw/excitation/planned_duration_s
     write_interval: 1
     flush_interval: 1000
 
