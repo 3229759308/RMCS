@@ -92,7 +92,7 @@ public:
         register_output(prefix_+"segment", segment_, 0.0);
         register_output(prefix_+"stage_elapsed_s", stage_elapsed_, 0.0);
         register_output(prefix_+"validation_segment", validation_segment_, 0.0);
-        register_output(prefix_+"protocol_version", protocol_version_, supplement_enabled_ ? 3.0 : standard_test_ ? 2.0 : 1.0);
+        register_output(prefix_+"protocol_version", protocol_version_, supplement_enabled_ ? 5.0 : standard_test_ ? 2.0 : 1.0);
         register_output(prefix_+"session_id", session_id_, 0.0);
         register_output(prefix_+"reference_yaw_rad", reference_yaw_, kNaN);
         register_output(prefix_+"pitch_target_up_deg", pitch_target_, pitch_up_deg_);

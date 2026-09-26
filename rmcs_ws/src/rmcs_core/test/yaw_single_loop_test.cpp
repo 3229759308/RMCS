@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     using rmcs_executor::Executor;
     using rmcs_msgs::Switch;
     YawSingleLoopSequence sequence;
-    near(sequence.duration(), 74, "74 second supplementary protocol");
+    near(sequence.duration(), 289.6, "289.6 second supplementary protocol");
     YawSingleLoopSequence velocity_sequence{true};
     near(velocity_sequence.duration(),112,"speed protocol includes longer steady-state plateaus");
     near(velocity_sequence.sample(5.99).value,0.05,"speed small-signal plateau lasts three seconds");
@@ -32,18 +32,71 @@ int main(int argc, char** argv) {
         positive |= sample.value > 0.99;
         negative |= sample.value < -0.99;
     }
-    check(stages == std::set<int>({10,11,12,13,14,15,16,18}) && positive && negative,
+    check(stages == std::set<int>({10,11,12,13,14,15,16,18,19,20,21,22,23,24}) && positive && negative,
           "all supplementary scenarios and both signs covered");
-    near(sequence.sample(3.1).value, 0.05, "small positive pulse");
+    near(sequence.sample(3.1).value, 0.02, "small positive pulse");
     near(sequence.sample(3.6).value, 0, "free decay between pulses");
-    near(sequence.sample(5.1).value, -0.05, "small negative pulse");
-    near(sequence.sample(23.1).value, 0.7, "positive reversal");
-    near(sequence.sample(23.5).value, -0.7, "negative reversal without intervening zero");
-    for (double t : {29.0,31.0,33.0,35.0})
+    near(sequence.sample(5.1).value, -0.02, "small negative pulse");
+    near(sequence.sample(67.1).value, 0.7, "positive reversal");
+    near(sequence.sample(67.5).value, -0.7, "negative reversal without intervening zero");
+    for (double t : {73.0,75.0,77.0,79.0})
         check(std::abs(sequence.sample(t+1e-7).value-sequence.sample(t-1e-7).value) < 1e-5,
               "ramp and chirp endpoints continuous");
-    for (double t : {-1.0,74.0,1000.0,std::numeric_limits<double>::quiet_NaN()})
+    for (double t : {-1.0,289.6,1000.0,std::numeric_limits<double>::quiet_NaN()})
         near(sequence.sample(t).value, 0, "outside sequence gives zero, never repeats");
+
+    // Verify every physical torque plateau, including its zero interval, in both directions.
+    double pulse_time = 3.1;
+    for (double torque : {0.05,0.1,0.125,0.2,0.25,0.375,0.5,0.625,
+                         0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5}) {
+        for (double sign : {1.0,-1.0}) {
+            near(sequence.sample(pulse_time).value*2.5,sign*torque,"dense rated torque coverage");
+            near(sequence.sample(pulse_time+0.5).value,0,"zero interval for each rated pulse");
+            pulse_time += 2;
+        }
+    }
+    // Velocity protocol retains its original ladder and timing.
+    pulse_time = 3.1;
+    for (double speed : {0.05,0.15,0.4,0.7,1.0}) {
+        for (double sign : {1.0,-1.0}) {
+            near(velocity_sequence.sample(pulse_time).value,sign*speed,"velocity ladder unchanged");
+            pulse_time += 5;
+        }
+    }
+
+    double wave_start = 127;
+    for (double amplitude : {0.2,0.5,1.0}) {
+        for (double frequency : {0.25,0.5,1.0,2.0,5.0}) {
+            auto crest = sequence.sample(wave_start+1.25/frequency);
+            check(crest.stage == 19,"sine matrix stage");
+            near(crest.value,amplitude,"full-amplitude sine crest");
+            near(crest.frequency,frequency,"fixed sine frequency logged");
+            near(sequence.sample(wave_start+1.75/frequency).value,-amplitude,"sine trough");
+            near(sequence.sample(wave_start).value,0,"sine starts at zero");
+            near(sequence.sample(wave_start+4/frequency+0.1).value,0,"zero between sine cases");
+            wave_start += 4/frequency+1;
+        }
+    }
+    near(wave_start,234.4,"all fifteen sine cases included");
+    near(sequence.sample(247.4+2).value,0.2,"positive DC bias");
+    near(sequence.sample(254.4+2).value,-0.2,"negative DC bias");
+    near(sequence.sample(261.5).value,0.2,"positive direct step");
+    near(sequence.sample(262.0).value,0.1,"same-sign downward step");
+    near(sequence.sample(262.5).value,-0.2,"direct polarity reversal");
+    double pulse_start = 271.9;
+    for (double width : {0.1,0.25,1.0})
+        for (double sign : {1.0,-1.0}) {
+            near(sequence.sample(pulse_start+width/2).value,sign*0.5,"variable-width pulse");
+            near(sequence.sample(pulse_start+width+0.1).value,0,"variable-width pulse ends");
+            pulse_start += width+1;
+        }
+    near(sequence.sample(281.6).value,0.5,"triangle rise");
+    near(sequence.sample(283.6).value,0,"triangle crosses zero");
+    near(sequence.sample(285.6).value,-0.5,"triangle return");
+    // Smooth waveform joins must not create unrequested steps.
+    for (double boundary : {127.0,234.4,246.4,247.4,253.4,254.4,260.4,280.6,282.6,284.6,286.6})
+        check(std::abs(sequence.sample(boundary+1e-7).value-sequence.sample(boundary-1e-7).value)<1e-5,
+              "smooth waveform boundary continuity");
 
     rclcpp::init(argc, argv);
     {
@@ -101,30 +154,34 @@ int main(int argc, char** argv) {
         step(); disabled();
         restart(Switch::UP);
         near(signal("mode"),3,"dedicated torque entry");
-        near(signal("protocol_version"),3,"supplement protocol version");
-        near(signal("planned_duration_s"),79,"delay plus full protocol");
+        near(signal("protocol_version"),5,"supplement protocol version");
+        near(signal("planned_duration_s"),294.6,"delay plus full protocol");
         step(4.999); near(signal("state"),1,"wait full five seconds");
         step(0.001); near(signal("state"),2,"baseline begins after delay");
         step(3.1);
-        near(signal("torque_reference_nm"),0.125,"physical torque reference scaling");
-        near(output("control_torque"),0.125,"direct torque bypasses both yaw PIDs");
+        near(signal("torque_reference_nm"),0.05,"physical torque reference scaling");
+        near(output("control_torque"),0.05,"direct torque bypasses both yaw PIDs");
         yaw_rate = -0.6;
         controller.update();
-        near(output("control_torque"),0.125,"torque independent of measured speed");
+        near(output("control_torque"),0.05,"torque independent of measured speed");
         check(std::isnan(output("control_angle_error")),"no position-loop error in supplementary mode");
         near(Executor::output<double>(controller,"/gimbal/pitch/control_angle_error"),
              -5*std::numbers::pi/180,"pitch remains five degrees despite joystick");
-        step(2); near(output("control_torque"),-0.125,"negative torque pulse reaches motor command");
+        step(2); near(output("control_torque"),-0.05,"negative torque pulse reaches motor command");
         for (double torque : {2.5,-2.5,4.5,-4.5,5.0,-5.0}) {
             signal("torque_reference_nm") = torque;
             controller.update(); near(output("control_torque"),torque,"direct torque has no supplementary clamp");
         }
         restart(Switch::UP);
-        step(72.1); // 5 s preparation + 67.1 s: positive peak stage.
-        near(signal("stage"),18,"separate peak torque stage");
-        near(output("control_torque"),4.5,"positive peak torque pulse");
-        step(2); near(output("control_torque"),-4.5,"negative peak torque pulse");
-        step(100); near(signal("state"),3,"completion state");
+        step(116.1); // 5 s preparation + 111.1 s: high-torque ladder starts.
+        for (double torque : {3.0,3.5,4.0,4.5}) {
+            near(signal("stage"),18,"high-torque ladder stage");
+            near(output("control_torque"),torque,"positive high-torque pulse");
+            step(0.5); near(output("control_torque"),0,"zero between high-torque pulses");
+            step(1.5); near(output("control_torque"),-torque,"negative high-torque pulse");
+            step(2);
+        }
+        step(300); near(signal("state"),3,"completion state");
         near(output("control_torque"),0,"completed torque mode gives zero");
         step(100); near(signal("state"),3,"does not automatically repeat");
 
@@ -156,7 +213,7 @@ int main(int argc, char** argv) {
                 near(signal("state"),2,"no supplementary overspeed trip");
                 check(std::isfinite(output("control_torque")),"controller continues at high speed");
                 if (target == Switch::UP)
-                    near(output("control_torque"),0.125,"direct torque unaffected by speed");
+                    near(output("control_torque"),0.05,"direct torque unaffected by speed");
             }
             yaw_rate = std::numeric_limits<double>::quiet_NaN();
             step(); near(signal("state"),2,"generator has no feedback fault latch");
@@ -187,6 +244,9 @@ int main(int argc, char** argv) {
             }
             for (int stage = 10; stage <= 17; ++stage)
                 check(integrated_stages.contains(stage),"every supplementary stage reaches the controller");
+            if (target == Switch::UP)
+                for (int stage = 18; stage <= 24; ++stage)
+                    check(integrated_stages.contains(stage),"all new torque waveforms reach controller");
             near(signal("state"),3,"full integrated protocol completes");
             near(output("control_torque"),0,"full integrated protocol ends with zero torque");
         }

@@ -43,14 +43,25 @@ yaw_excitation:
   ros__parameters:
     enabled: true
     standard_test: true # false retains the standalone chirp for mode 1
-    # Supplement protocol v3: left UP/right MIDDLE = direct yaw torque (mode 3);
+    # Supplement protocol v5: left UP/right MIDDLE = direct yaw torque (mode 3);
     # left MIDDLE/right MIDDLE = yaw velocity PID only (mode 4). Pitch stays +5 deg.
-    # Wait delay_s, execute torque 74 s / velocity 112 s once, then zero yaw torque.
+    # Wait delay_s, execute torque 289.6 s / velocity 112 s once, then zero yaw torque.
     # Speed ladder holds 3 s per level for steady state; torque pulses last 0.5 s.
     # Original double DOWN / remote UNKNOWN behavior is retained. No added supplement protection.
     supplement_enabled: true
+    # Stage 11 at rated=2.5: +/-[0.05,0.1,0.125,0.2,0.25,0.375,0.5,0.625,
+    #   0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5] N*m.
+    # Stage 18 at peak=4.5: +/-[3.0,3.5,4.0,4.5] N*m.
+    # Ladder pulses: 0.5 s then 1.5 s zero; levels scale with amplitudes.
+    # Stage 19: sine amplitudes [0.5,1.25,2.5] N*m x [0.25,0.5,1,2,5] Hz,
+    #   four cycles per combination, first/last cycle faded, 1 s zero between.
+    # Stage 20: 12 s multisine at 0.5/1.5/3.5 Hz, weights 0.5/0.3/0.2.
+    # Stage 21: 1 Hz sine, 0.75 N*m amplitude, +/-0.5 N*m bias, 6 s each.
+    # Stage 22: direct steps [+A,+A/2,-A,-A/2,0], A=[0.5,1.25,2.5] N*m.
+    # Stage 23: +/-1.25 N*m pulses lasting 0.1/0.25/1 s, each followed by 1 s zero.
+    # Stage 24: triangular ramps 0 -> +2.5 -> -2.5 -> 0 N*m, 2 s each leg.
     supplement_torque_nm: 2.5 # Rated torque; main test amplitude in N*m.
-    supplement_peak_torque_nm: 4.5 # Separate +/- peak pulses, 0.5 s each; not a clamp.
+    supplement_peak_torque_nm: 4.5 # Separate +/- high-torque ladder, 0.5 s each; not a clamp.
     supplement_velocity_rad_s: 1.0 # Peak speed reference; no yaw position PID/feedforward.
     switch_left: "up"
     switch_right: "down"
@@ -118,7 +129,9 @@ value_collector:
       # 6 held-out mixed trajectory, 7 final hold, 8 completed, 9 manual.
       # Supplement: 10 zero, 11 +/- small-signal/ladder pulses, 12 reversals,
       # 13 cosine ramps, 14 0.1->5 Hz chirp, 15 held-out mixed pulses,
-      # 16 final zero, 17 completed, 18 peak torque pulses. Mode distinguishes units.
+      # 16 final zero, 17 completed, 18 high-torque ladder pulses.
+      # 19 sine matrix, 20 multisine (frequency_hz=0; no single frequency),
+      # 21 biased sine, 22 direct steps, 23 variable-width pulses, 24 triangle.
       - /gimbal/yaw/excitation/stage
       - /gimbal/yaw/excitation/segment
       - /gimbal/yaw/excitation/stage_elapsed_s
