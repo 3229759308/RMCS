@@ -42,12 +42,17 @@ pluginlib_export_plugin_description_file(rmcs_executor plugins.xml)
 
 if(BUILD_TESTING)
     enable_testing()
-    foreach(test_name yaw_excitation_test yaw_single_loop_test)
+    foreach(test_name yaw_excitation_test yaw_single_loop_test yaw_accel_feedforward_test)
         ament_auto_add_executable(${test_name} test/${test_name}.cpp)
         # Do not install the hardware-free test fixtures onto the robot.
         list(REMOVE_ITEM ${PROJECT_NAME}_EXECUTABLES ${test_name})
         add_test(NAME ${test_name} COMMAND ${test_name}
             --ros-args --params-file ${CMAKE_CURRENT_SOURCE_DIR}/test/yaw_excitation_test.yaml)
+    endforeach()
+    foreach(ff_scale 0.0 0.25 0.5 1.0)
+        add_test(NAME yaw_accel_feedforward_scale_${ff_scale} COMMAND yaw_accel_feedforward_test
+            --ros-args --params-file ${CMAKE_CURRENT_SOURCE_DIR}/test/yaw_excitation_test.yaml
+            -p yaw_accel_ff_enabled:=true -p yaw_accel_ff_scale:=${ff_scale})
     endforeach()
 endif()
 

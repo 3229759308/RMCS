@@ -13,6 +13,73 @@
 // #include <rmcs_msgs/mouse.hpp>
 #include <rmcs_msgs/switch.hpp>
 
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+namespace yaw_experiment {
+
+struct AccelFeedforwardConfig {
+    bool enabled = false;
+    double inertia_kg_m2 = 0.173778;
+    double scale = 0.0;
+    double limit_nm = 0.6;  // Experiment component cap, not the motor torque rating.
+};
+
+inline void validate(const AccelFeedforwardConfig& c) {
+    if (!std::isfinite(c.inertia_kg_m2) || c.inertia_kg_m2 <= 0.0
+        || !std::isfinite(c.scale) || c.scale < 0.0 || c.scale > 1.0
+        || !std::isfinite(c.limit_nm) || c.limit_nm <= 0.0)
+        throw std::invalid_argument("invalid yaw acceleration feedforward configuration");
+}
+
+struct AccelFeedforwardResult {
+    double raw_nm = 0.0;
+    double applied_nm = 0.0;
+    bool active = false;
+    bool reference_valid = false;
+    bool clipped = false;
+};
+
+// Called once per controller update after PID and existing validity checks.
+// 'normal_double_loop' must be false for reset/disabled/control-hold paths.
+// Configuration is validated once at startup, not inside the real-time loop.
+inline AccelFeedforwardResult evaluate(
+    const AccelFeedforwardConfig& c,
+    bool normal_double_loop,
+    bool selected,
+    double mode,
+    double state,
+    bool acceleration_ready,
+    double acceleration_rad_s2) {
+    AccelFeedforwardResult r;
+    r.reference_valid = acceleration_ready && std::isfinite(acceleration_rad_s2);
+    if (!c.enabled || c.scale == 0.0 || !normal_double_loop || !selected
+        || mode != 1.0 || state != 2.0 || !r.reference_valid)
+        return r;
+    r.raw_nm = c.scale * c.inertia_kg_m2 * acceleration_rad_s2;
+    if (!std::isfinite(r.raw_nm)) {
+        r.raw_nm = 0.0;
+        r.reference_valid = false;
+        return r;
+    }
+    r.active = true;
+    r.applied_nm = std::clamp(r.raw_nm, -c.limit_nm, c.limit_nm);
+    r.clipped = r.applied_nm != r.raw_nm;
+    return r;
+}
+
+// Retain the exact PID result on the disabled path, including signed zero/NaN.
+// Do not use this function to replace existing reset/disable behavior.
+inline double add_to_pid(double pid_torque_nm, const AccelFeedforwardResult& r) {
+    if (!std::isfinite(pid_torque_nm) || !r.active || r.applied_nm == 0.0)
+        return pid_torque_nm;
+    return pid_torque_nm + r.applied_nm;
+}
+
+}  // namespace yaw_experiment
+
 namespace rmcs_core::controller::gimbal {
 
 class DeformableInfantryGimbalController
@@ -23,6 +90,16 @@ public:
         : Node(
               get_component_name(),
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)) {
+
+        get_parameter_or("yaw_accel_ff_enabled", yaw_ff_config_.enabled, false);
+        get_parameter_or("yaw_accel_ff_inertia_kg_m2", yaw_ff_config_.inertia_kg_m2, 0.173778);
+        get_parameter_or("yaw_accel_ff_scale", yaw_ff_config_.scale, 0.0);
+        get_parameter_or("yaw_accel_ff_limit_nm", yaw_ff_config_.limit_nm, 0.6);
+        yaw_experiment::validate(yaw_ff_config_);
+        *output_.ff_enabled = yaw_ff_config_.enabled;
+        *output_.ff_scale = yaw_ff_config_.scale;
+        *output_.ff_inertia_kg_m2 = yaw_ff_config_.inertia_kg_m2;
+        *output_.ff_limit_nm = yaw_ff_config_.limit_nm;
 
         configure_pid("yaw_angle", yaw_angle_pid_);
         configure_pid("yaw_velocity", yaw_velocity_pid_);
@@ -45,6 +122,7 @@ public:
     }
 
     auto update() -> void override {
+        reset_feedforward_diagnostics();
         *output_.supplement_velocity_error = kNaN;
         const auto switch_right = *input_.switch_right;
         const auto switch_left = *input_.switch_left;
@@ -134,8 +212,25 @@ public:
             // *output_.yaw_control_torque =
                 // yaw_velocity_pid_.update(yaw_velocity_ref - *input_.yaw_velocity_imu)
                 // + trajectory_ff.yaw_velocity + trajectory_ff.yaw_acceleration;
-            *output_.yaw_control_torque =
-                yaw_velocity_pid_.update(yaw_velocity_ref - *input_.yaw_velocity_imu);
+            const double velocity_error = yaw_velocity_ref - *input_.yaw_velocity_imu;
+            const double torque_pid = yaw_velocity_pid_.update(velocity_error);
+            const bool alpha_ready = input_.acceleration_reference.ready();
+            const double alpha = alpha_ready ? *input_.acceleration_reference : kNaN;
+            const double state = input_.excitation_state.ready() ? *input_.excitation_state : 0.0;
+            const auto ff = yaw_experiment::evaluate(
+                yaw_ff_config_, !ctrl_hold_active_ && std::isfinite(torque_pid),
+                excitation_selected, test_mode, state, alpha_ready, alpha);
+            *output_.yaw_control_torque = yaw_experiment::add_to_pid(torque_pid, ff);
+            *output_.ff_reference_valid = ff.reference_valid;
+            *output_.ff_active = ff.active;
+            *output_.ff_torque_raw_nm = ff.raw_nm;
+            *output_.ff_torque_applied_nm = ff.applied_nm;
+            *output_.ff_clipped = ff.clipped;
+            if (!ctrl_hold_active_ && std::isfinite(torque_pid)) {
+                *output_.ff_pid_torque_nm = torque_pid;
+                *output_.ff_velocity_command_rad_s = yaw_velocity_ref;
+                *output_.ff_velocity_error_rad_s = velocity_error;
+            }
         }
 
         if (!ctrl_hold_active_) {
@@ -193,6 +288,7 @@ private:
             // component.register_input("/remote/mouse", mouse);
             component.register_input("/predefined/update_rate", update_rate, false);
 
+            component.register_input("/gimbal/yaw/excitation/acceleration_rad_s2", acceleration_reference, false);
             component.register_input("/gimbal/yaw/excitation/mode", excitation_mode, false);
             component.register_input("/gimbal/yaw/excitation/state", excitation_state, false);
             component.register_input("/gimbal/yaw/excitation/torque_reference_nm", torque_reference, false);
@@ -219,6 +315,7 @@ private:
         // InputInterface<rmcs_msgs::Mouse> mouse;
         InputInterface<double> update_rate;
 
+        InputInterface<double> acceleration_reference;
         InputInterface<double> excitation_mode, excitation_state, torque_reference, velocity_reference;
         InputInterface<bool> excitation_selected;
         InputInterface<double> excitation_session;
@@ -235,6 +332,20 @@ private:
 
     struct Output {
         explicit Output(rmcs_executor::Component& component) {
+            component.register_output("/gimbal/yaw/ff/enabled", ff_enabled, 0.0);
+            component.register_output("/gimbal/yaw/ff/scale", ff_scale, 0.0);
+            component.register_output("/gimbal/yaw/ff/inertia_kg_m2", ff_inertia_kg_m2, 0.173778);
+            component.register_output("/gimbal/yaw/ff/limit_nm", ff_limit_nm, 0.6);
+            component.register_output("/gimbal/yaw/ff/active", ff_active, 0.0);
+            component.register_output("/gimbal/yaw/ff/reference_valid", ff_reference_valid, 0.0);
+            component.register_output("/gimbal/yaw/ff/acceleration_used_rad_s2", ff_acceleration_used_rad_s2, kNaN);
+            component.register_output("/gimbal/yaw/ff/torque_raw_nm", ff_torque_raw_nm, 0.0);
+            component.register_output("/gimbal/yaw/ff/torque_applied_nm", ff_torque_applied_nm, 0.0);
+            component.register_output("/gimbal/yaw/ff/clipped", ff_clipped, 0.0);
+            component.register_output("/gimbal/yaw/ff/pid_torque_nm", ff_pid_torque_nm, kNaN);
+            component.register_output("/gimbal/yaw/ff/velocity_command_rad_s", ff_velocity_command_rad_s, kNaN);
+            component.register_output("/gimbal/yaw/ff/velocity_error_rad_s", ff_velocity_error_rad_s, kNaN);
+
             component.register_output("/gimbal/yaw/supplement/velocity_error_rad_s", supplement_velocity_error, kNaN);
             component.register_output("/gimbal/yaw/control_torque", yaw_control_torque, kNaN);
             component.register_output("/gimbal/yaw/control_angle", yaw_control_angle, kNaN);
@@ -246,6 +357,19 @@ private:
             component.register_output("/gimbal/pitch/control_angle_error", pitch_angle_error, kNaN);
         }
 
+        OutputInterface<double> ff_enabled;
+        OutputInterface<double> ff_scale;
+        OutputInterface<double> ff_inertia_kg_m2;
+        OutputInterface<double> ff_limit_nm;
+        OutputInterface<double> ff_active;
+        OutputInterface<double> ff_reference_valid;
+        OutputInterface<double> ff_acceleration_used_rad_s2;
+        OutputInterface<double> ff_torque_raw_nm;
+        OutputInterface<double> ff_torque_applied_nm;
+        OutputInterface<double> ff_clipped;
+        OutputInterface<double> ff_pid_torque_nm;
+        OutputInterface<double> ff_velocity_command_rad_s;
+        OutputInterface<double> ff_velocity_error_rad_s;
         OutputInterface<double> yaw_control_torque;
         OutputInterface<double> yaw_control_angle;
         OutputInterface<double> pitch_control_velocity;
@@ -389,7 +513,22 @@ private:
         }
     }
 
+    auto reset_feedforward_diagnostics() -> void {
+        const double alpha = input_.acceleration_reference.ready()
+            ? *input_.acceleration_reference : kNaN;
+        *output_.ff_acceleration_used_rad_s2 = alpha;
+        *output_.ff_reference_valid = std::isfinite(alpha);
+        *output_.ff_active = 0.0;
+        *output_.ff_torque_raw_nm = 0.0;
+        *output_.ff_torque_applied_nm = 0.0;
+        *output_.ff_clipped = 0.0;
+        *output_.ff_pid_torque_nm = kNaN;
+        *output_.ff_velocity_command_rad_s = kNaN;
+        *output_.ff_velocity_error_rad_s = kNaN;
+    }
+
     auto reset_control_outputs() -> void {
+        reset_feedforward_diagnostics();
         yaw_angle_pid_.reset();
         yaw_velocity_pid_.reset();
         pitch_angle_pid_.reset();
@@ -436,6 +575,8 @@ private:
         get_parameter("pitch_velocity_ki").as_double(),
         get_parameter("pitch_velocity_kd").as_double(),
     };
+
+    yaw_experiment::AccelFeedforwardConfig yaw_ff_config_;
 
     double joystick_sensitivity_ = 0.003;
     // double mouse_sensitivity_ = 0.5;

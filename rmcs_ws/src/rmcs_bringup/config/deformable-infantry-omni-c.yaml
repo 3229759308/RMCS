@@ -141,6 +141,19 @@ value_collector:
       - /gimbal/yaw/excitation/pitch_target_up_deg
       - /gimbal/yaw/excitation/pitch_actual_up_deg
       - /gimbal/yaw/excitation/planned_duration_s
+      - /gimbal/yaw/ff/enabled
+      - /gimbal/yaw/ff/scale
+      - /gimbal/yaw/ff/inertia_kg_m2
+      - /gimbal/yaw/ff/limit_nm
+      - /gimbal/yaw/ff/active
+      - /gimbal/yaw/ff/reference_valid
+      - /gimbal/yaw/ff/acceleration_used_rad_s2
+      - /gimbal/yaw/ff/torque_raw_nm
+      - /gimbal/yaw/ff/torque_applied_nm
+      - /gimbal/yaw/ff/clipped
+      - /gimbal/yaw/ff/pid_torque_nm
+      - /gimbal/yaw/ff/velocity_command_rad_s
+      - /gimbal/yaw/ff/velocity_error_rad_s
     write_interval: 1
     flush_interval: 1000
 
@@ -290,6 +303,11 @@ gimbal_controller:
     pitch_velocity_ki: 0.0
     pitch_velocity_kd: 0.0
 
+    # Startup-only inertia experiment; restart after changing these parameters.
+    yaw_accel_ff_enabled: true
+    yaw_accel_ff_inertia_kg_m2: 0.173778
+    yaw_accel_ff_scale: 1.0
+    yaw_accel_ff_limit_nm: 0.6
     yaw_ref_velocity_gain: 1.0
     pitch_ref_velocity_gain: 1.0
 
