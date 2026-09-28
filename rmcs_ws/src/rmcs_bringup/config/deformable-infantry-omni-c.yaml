@@ -42,7 +42,11 @@ rmcs_executor:
 yaw_excitation:
   ros__parameters:
     enabled: true
-    standard_test: true # false retains the standalone chirp for mode 1
+    square_test: true # Left UP/right DOWN: 12 step groups (8 cycles), then 10 tracking groups (10 cycles); ~9m36s.
+    square_group: 0 # 0 = all; 1..12 = step; 13..22 = tracking (amplitude then frequency).
+    square_prepare_s: 5.0 # Hold -A before the first measured -A -> +A edge.
+    square_dwell_s: 2.0 # Return to center between groups; excluded from analysis.
+    standard_test: true # Used only when square_test=false; false selects standalone chirp.
     # Supplement protocol v5: left UP/right MIDDLE = direct yaw torque (mode 3);
     # left MIDDLE/right MIDDLE = yaw velocity PID only (mode 4). Pitch stays +5 deg.
     # Wait delay_s, execute torque 289.6 s / velocity 112 s once, then zero yaw torque.
@@ -141,6 +145,10 @@ value_collector:
       - /gimbal/yaw/excitation/pitch_target_up_deg
       - /gimbal/yaw/excitation/pitch_actual_up_deg
       - /gimbal/yaw/excitation/planned_duration_s
+      - /gimbal/yaw/excitation/square_amplitude_deg
+      - /gimbal/yaw/excitation/square_cycle
+      - /gimbal/yaw/excitation/square_edge
+      - /gimbal/yaw/excitation/square_edge_time_s
       - /gimbal/yaw/ff/enabled
       - /gimbal/yaw/ff/scale
       - /gimbal/yaw/ff/inertia_kg_m2
@@ -303,10 +311,10 @@ gimbal_controller:
     pitch_velocity_ki: 0.0
     pitch_velocity_kd: 0.0
 
-    # Startup-only inertia experiment; restart after changing these parameters.
-    yaw_accel_ff_enabled: true
+    # Integral-limit A/B baseline: inertia feedforward off; restart to switch groups.
+    yaw_accel_ff_enabled: false
     yaw_accel_ff_inertia_kg_m2: 0.173778
-    yaw_accel_ff_scale: 1.0
+    yaw_accel_ff_scale: 0.0
     yaw_accel_ff_limit_nm: 0.6
     yaw_ref_velocity_gain: 1.0
     pitch_ref_velocity_gain: 1.0

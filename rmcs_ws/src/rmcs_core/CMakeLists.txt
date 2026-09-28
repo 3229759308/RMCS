@@ -42,7 +42,7 @@ pluginlib_export_plugin_description_file(rmcs_executor plugins.xml)
 
 if(BUILD_TESTING)
     enable_testing()
-    foreach(test_name yaw_excitation_test yaw_single_loop_test yaw_accel_feedforward_test)
+    foreach(test_name yaw_square_sequence_test yaw_excitation_test yaw_single_loop_test yaw_accel_feedforward_test)
         ament_auto_add_executable(${test_name} test/${test_name}.cpp)
         # Do not install the hardware-free test fixtures onto the robot.
         list(REMOVE_ITEM ${PROJECT_NAME}_EXECUTABLES ${test_name})

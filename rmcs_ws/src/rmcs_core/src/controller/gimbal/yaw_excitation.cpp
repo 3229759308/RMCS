@@ -1,4 +1,5 @@
 #include "controller/gimbal/yaw_test_sequence.hpp"
+#include "controller/gimbal/yaw_square_sequence.hpp"
 #include "controller/gimbal/yaw_single_loop_sequence.hpp"
 
 #include <chrono>
@@ -29,6 +30,13 @@ public:
         get_parameter_or("end_frequency_hz", profile_.end_frequency_hz, profile_.end_frequency_hz);
         get_parameter_or("max_velocity_rad_s", profile_.max_velocity_rad_s, profile_.max_velocity_rad_s);
         profile_.validate();
+        get_parameter_or("square_test", square_test_, false);
+        double prepare, dwell;
+        int group;
+        get_parameter_or("square_prepare_s", prepare, 5.0);
+        get_parameter_or("square_dwell_s", dwell, 2.0);
+        get_parameter_or("square_group", group, 0);
+        square_sequence_.configure(profile_.delay_s, prepare, dwell, group);
         get_parameter_or("pitch_up_deg", pitch_up_deg_, 5.0);
         get_parameter_or("manual_acceleration_rad_s2", manual_acceleration_, 3.0);
         get_parameter_or("manual_deadband", manual_deadband_, 0.02);
@@ -92,12 +100,16 @@ public:
         register_output(prefix_+"segment", segment_, 0.0);
         register_output(prefix_+"stage_elapsed_s", stage_elapsed_, 0.0);
         register_output(prefix_+"validation_segment", validation_segment_, 0.0);
-        register_output(prefix_+"protocol_version", protocol_version_, supplement_enabled_ ? 5.0 : standard_test_ ? 2.0 : 1.0);
+        register_output(prefix_+"protocol_version", protocol_version_, square_test_ ? 7.0 : supplement_enabled_ ? 5.0 : standard_test_ ? 2.0 : 1.0);
         register_output(prefix_+"session_id", session_id_, 0.0);
         register_output(prefix_+"reference_yaw_rad", reference_yaw_, kNaN);
         register_output(prefix_+"pitch_target_up_deg", pitch_target_, pitch_up_deg_);
         register_output(prefix_+"pitch_actual_up_deg", pitch_actual_, kNaN);
         register_output(prefix_+"planned_duration_s", planned_duration_, 0.0);
+        register_output(prefix_+"square_amplitude_deg", square_amplitude_, 0.0);
+        register_output(prefix_+"square_cycle", square_cycle_, 0.0);
+        register_output(prefix_+"square_edge", square_edge_, 0.0);
+        register_output(prefix_+"square_edge_time_s", square_edge_time_, -1.0);
         // Numeric mirrors: ValueCollector supports only double signals.
         register_output(prefix_+"switch_left", logged_left_, 0.0);
         register_output(prefix_+"switch_right", logged_right_, 0.0);
@@ -114,6 +126,8 @@ public:
         const bool attitude_valid = current->allFinite() && current->head<2>().norm() >= 1e-6;
         *pitch_actual_ = attitude_valid
             ? std::asin(std::clamp(current->normalized().z(), -1.0, 1.0))*180/std::numbers::pi : kNaN;
+        *square_amplitude_ = *square_cycle_ = *square_edge_ = 0;
+        *square_edge_time_ = -1;
         *torque_reference_ = 0;
         const int requested = !enabled_ ? 0
             : supplement_enabled_ && *right_ == rmcs_msgs::Switch::MIDDLE
@@ -144,7 +158,7 @@ public:
             previous_elapsed_ = 0;
             manual_ = {};
             *planned_duration_ = mode_ == 1
-                ? (standard_test_ ? sequence_.duration() : profile_.delay_s+profile_.duration_s)
+                ? (square_test_ ? square_sequence_.duration() : standard_test_ ? sequence_.duration() : profile_.delay_s+profile_.duration_s)
                 : mode_ >= 3 ? profile_.delay_s+single_loop_sequence().duration() : 0;
             if (!attitude_valid) { fault(); return; }
             const double elevation = pitch_up_deg_*std::numbers::pi/180;
@@ -172,6 +186,15 @@ public:
             const double elevation = pitch_up_deg_*std::numbers::pi/180;
             initial_direction_ = {std::cos(elevation)*std::cos(initial_yaw_),
                                   std::cos(elevation)*std::sin(initial_yaw_), std::sin(elevation)};
+        } else if (mode_ == 1 && square_test_) {
+            const auto s = square_sequence_.sample(*elapsed_);
+            *state_ = s.state; *offset_ = s.angle; *frequency_ = s.frequency;
+            // Ideal angle steps have no finite derivative; never feed them forward.
+            *velocity_ = *acceleration_ = kNaN;
+            *stage_ = s.stage; *segment_ = s.group; *stage_elapsed_ = s.stage_elapsed;
+            *validation_segment_ = 0;
+            *square_amplitude_ = s.amplitude_deg; *square_cycle_ = s.cycle;
+            *square_edge_ = s.edge; *square_edge_time_ = s.edge_time;
         } else if (mode_ == 1 && standard_test_) {
             const auto s = sequence_.sample(*elapsed_);
             *state_ = s.state; *offset_ = s.angle; *velocity_ = s.velocity;
@@ -228,6 +251,9 @@ private:
     const std::string prefix_ = "/gimbal/yaw/excitation/";
     YawExcitationProfile profile_;
     YawTestSequence sequence_;
+    YawSquareSequence square_sequence_;
+    bool square_test_ = false;
+    OutputInterface<double> square_amplitude_, square_cycle_, square_edge_, square_edge_time_;
     const YawSingleLoopSequence& single_loop_sequence() const {
         return mode_ == 4 ? velocity_sequence_ : torque_sequence_;
     }
