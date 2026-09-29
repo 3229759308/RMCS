@@ -42,8 +42,8 @@ rmcs_executor:
 yaw_excitation:
   ros__parameters:
     enabled: true
-    square_test: true # Left UP/right DOWN: 12 step groups (8 cycles), then 10 tracking groups (10 cycles); ~9m36s.
-    square_group: 0 # 0 = all; 1..12 = step; 13..22 = tracking (amplitude then frequency).
+    square_test: true # Left UP/right DOWN: 7 step groups (8 cycles each); 4m22s.
+    square_group: 0 # 0 = all; 1..6 = +/-5/10/15 deg at 0.2/0.5 Hz; 7 = +/-30 deg at 0.2 Hz.
     square_prepare_s: 5.0 # Hold -A before the first measured -A -> +A edge.
     square_dwell_s: 2.0 # Return to center between groups; excluded from analysis.
     standard_test: true # Used only when square_test=false; false selects standalone chirp.

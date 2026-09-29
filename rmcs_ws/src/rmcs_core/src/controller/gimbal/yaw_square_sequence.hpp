@@ -8,7 +8,7 @@
 
 namespace rmcs_core::controller::gimbal {
 
-// Protocol 7 (reduced matrix): stage 30 preparation at -A, 31 step response, 32 tracking,
+// Protocol 8 (seven step groups): stage 30 preparation at -A, 31 step response,
 // 33 center dwell. Preparation and dwell are never response windows.
 class YawSquareSequence {
 public:
@@ -21,14 +21,13 @@ public:
     void configure(double delay, double prepare, double dwell, int selected = 0) {
         for (double v : {delay, prepare, dwell})
             if (!std::isfinite(v) || v < 0) throw std::invalid_argument("invalid square timing");
-        if (prepare < 0.2 || selected < 0 || selected > 22)
-            throw std::invalid_argument("square prepare must be >=0.2 s; group must be 0..22");
+        if (prepare < 0.2 || selected < 0 || selected > 7)
+            throw std::invalid_argument("square prepare must be >=0.2 s; group must be 0..7");
         delay_ = delay; prepare_ = prepare; dwell_ = dwell; selected_ = selected;
         groups_.clear();
-        for (double a : {5., 10., 15., 30., 60., 85.})
+        for (double a : {5., 10., 15.})
             for (double f : {0.2, 0.5}) groups_.push_back({a, f, 8, 31});
-        for (double a : {5., 10.})
-            for (double f : {0.5, 1., 2., 3., 5.}) groups_.push_back({a, f, 10, 32});
+        groups_.push_back({30., 0.2, 8, 31});
     }
     const std::vector<Group>& groups() const { return groups_; }
     double duration() const {

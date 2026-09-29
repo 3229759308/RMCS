@@ -6,14 +6,16 @@ static void check(bool ok) { if (!ok) throw std::runtime_error("square sequence 
 int main() {
     YawSquareSequence all;
     all.configure(5, 5, 2);
-    check(all.groups().size() == 22);
-    check(std::abs(all.duration() - (575.0 + 2.0/3.0)) < 1e-9);
+    check(all.groups().size() == 7);
+    check(std::abs(all.duration() - 262.0) < 1e-9);
     double start = 5;
-    for (int id = 1; id <= 22; ++id) {
+    for (int id = 1; id <= 7; ++id) {
         const auto g = all.groups()[id-1];
-        check(g.amplitude_deg >= 5 && g.frequency >= 0.2);
-        check(g.cycles == (id <= 12 ? 8 : 10));
-        check(g.stage == (id <= 12 ? 31 : 32));
+        const double amplitudes[] = {5, 5, 10, 10, 15, 15, 30};
+        const double frequencies[] = {0.2, 0.5, 0.2, 0.5, 0.2, 0.5, 0.2};
+        check(g.amplitude_deg == amplitudes[id-1] && g.frequency == frequencies[id-1]);
+        check(g.cycles == 8);
+        check(g.stage == 31);
         const double a = g.amplitude_deg*std::numbers::pi/180;
         const double half = 0.5/g.frequency;
         check(all.sample(start+0.01).stage == 30);
@@ -42,10 +44,10 @@ int main() {
     check(std::abs(start-all.duration()) < 1e-9);
     check(all.sample(start+1e-8).state == 3);
     check(all.sample(4.99).state == 1);
-    for (int id : {-1, 23}) {
+    for (int id : {-1, 8, 22, 23}) {
         bool rejected = false;
         try { all.configure(5,5,2,id); } catch (const std::invalid_argument&) { rejected = true; }
         check(rejected);
     }
-    std::cout << "22 groups: amplitudes, frequencies, complete windows, selection and completion passed\n";
+    std::cout << "7 groups: amplitudes, frequencies, complete windows, selection and completion passed\n";
 }
